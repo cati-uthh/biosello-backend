@@ -1,0 +1,9 @@
+# 1. Ignorar credenciales sensibles
+.env
+
+# 2. Ignorar dependencias pesadas
+node_modules/
+
+# 3. Ignorar archivos de registro y sistema
+npm-debug.log*
+.DS_Store
