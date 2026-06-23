@@ -23,7 +23,7 @@ export const registrarNegocio = async (datosNegocio) => {
       
       // Subimos el archivo a Vercel Blob
       const blob = await put(`documentos/${Date.now()}-${nombreArchivo}`, buffer, {
-        access: 'privated',
+        access: 'private',
       });
       
       // Vercel nos devuelve la URL pública y segura
