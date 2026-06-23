@@ -20,3 +20,11 @@ export default async function handler(req, res) {
   // Ejecutar el controlador
   await registrarNuevoNegocio(req, res);
 }
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb', // Aumentamos el límite para permitir PDFs o fotos
+    },
+  },
+};
