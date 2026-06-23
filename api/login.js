@@ -29,7 +29,7 @@ export default async function handler(req, res) {
 
         // 2. Consulta a la base de datos uniendo usuario y negocio
         const query = `
-            SELECT u.id_usuario, u.nombre, u.email, u.contrasena_hash, u.perfil, u.activo, n.estatus_verificacion
+            SELECT u.id_usuario, u.nombre, u.email, u.contrasena_hash, u.perfil, u.activo, n.id_negocio, n.estatus_verificacion
             FROM usuario u
             LEFT JOIN negocio n ON u.id_usuario = n.id_admin
             WHERE u.email = ?
@@ -74,7 +74,9 @@ export default async function handler(req, res) {
                 id: usuario.id_usuario,
                 nombre: usuario.nombre,
                 email: usuario.email,
+                id_usuario: usuario.id_usuario,
                 perfil: usuario.perfil,
+                id_negocio: usuario.id_negocio,
                 estatus_negocio: usuario.estatus_verificacion // Retornamos si es pendiente/aprobado
             }
         });
