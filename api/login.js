@@ -1,4 +1,4 @@
-import pool from '../src/config/db.js'; 
+import pool from '../src/config/db'; 
 import bcrypt from 'bcrypt';
 
 export default async function handler(req, res) {

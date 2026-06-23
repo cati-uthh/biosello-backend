@@ -1,4 +1,4 @@
-import pool from '../config/db.js';
+import pool from '../db';
 import bcrypt from 'bcrypt';
 import { put } from '@vercel/blob';
 
