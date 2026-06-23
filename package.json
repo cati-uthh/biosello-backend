@@ -19,6 +19,7 @@
   },
   "homepage": "https://github.com/cati-uthh/biosello-backend#readme",
   "dependencies": {
+    "@vercel/blob": "^2.4.1",
     "bcryptjs": "^3.0.3",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
