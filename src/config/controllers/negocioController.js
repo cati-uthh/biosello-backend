@@ -1,4 +1,4 @@
-import { registrarNegocio } from '../services/negocioService.js';
+import { registrarNegocio } from '../services/negocioServise.js';
 import { handleError } from '../utils/errorHandler.js';
 
 export const registrarNuevoNegocio = async (req, res) => {

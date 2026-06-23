@@ -1,5 +1,5 @@
 import pool from '../db';
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 import { put } from '@vercel/blob';
 
 export const registrarNegocio = async (datosNegocio) => {
