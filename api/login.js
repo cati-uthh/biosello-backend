@@ -1,5 +1,5 @@
 import pool from '../src/config/db' 
-import bcrypt from 'bcrypt';
+import bcrypt from 'bcryptjs';
 
 export default async function handler(req, res) {
     // 1. Configuración de CORS
