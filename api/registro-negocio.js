@@ -1,4 +1,4 @@
-import { registrarNuevoNegocio } from '../src/config/controllers'
+import { registrarNuevoNegocio } from '../src/config/controllers/negocioController'
 
 export default async function handler(req, res) {
   // Aseguramos cabeceras CORS básicas (útil si luego hacen un dashboard web)
