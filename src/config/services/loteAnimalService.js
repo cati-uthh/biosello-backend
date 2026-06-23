@@ -261,3 +261,64 @@ export const registrarLoteAnimal = async (datos) => {
     connection.release();
   }
 };
+
+export const obtenerLotes = async ({ idNegocio = null, idEmpleado = null } = {}) => {
+  const connection = await pool.getConnection();
+
+  try {
+    const filtros = [];
+    const params = [];
+
+    if (idNegocio) {
+      filtros.push('l.id_negocio = ?');
+      params.push(idNegocio);
+    }
+
+    if (!idNegocio && idEmpleado) {
+      filtros.push('l.id_empleado = ?');
+      params.push(idEmpleado);
+    }
+
+    const where = filtros.length > 0 ? `WHERE ${filtros.join(' AND ')}` : '';
+
+    const [rows] = await connection.execute(
+      `
+        SELECT
+          l.id_lote,
+          l.codigo_lote,
+          l.tipo_corte,
+          l.peso_kg,
+          DATE_FORMAT(l.fecha_ingreso, '%Y-%m-%d') AS fecha_ingreso,
+          DATE_FORMAT(l.fecha_vencimiento, '%Y-%m-%d') AS fecha_vencimiento,
+          l.estado,
+          l.id_negocio,
+          l.id_empleado,
+          a.id_animal,
+          a.num_arete,
+          a.especie,
+          CASE
+            WHEN a.especie = 'BOVINO' THEN 'Res'
+            WHEN a.especie = 'PORCINO' THEN 'Cerdo'
+            ELSE a.especie
+          END AS especie_nombre,
+          (
+            SELECT gt.folio_guia
+            FROM guia_animal ga
+            INNER JOIN guia_transito gt ON gt.id_guia = ga.id_guia
+            WHERE ga.id_animal = a.id_animal
+            ORDER BY gt.created_at DESC, gt.id_guia DESC
+            LIMIT 1
+          ) AS folio_guia
+        FROM lote l
+        LEFT JOIN animal a ON a.id_animal = l.id_animal
+        ${where}
+        ORDER BY l.fecha_ingreso DESC, l.id_lote DESC
+      `,
+      params
+    );
+
+    return rows;
+  } finally {
+    connection.release();
+  }
+};
