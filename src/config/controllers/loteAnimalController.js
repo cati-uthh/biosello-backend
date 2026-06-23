@@ -1,4 +1,4 @@
-import { registrarLoteAnimal } from '../services/loteAnimalService.js';
+import { obtenerLotes, registrarLoteAnimal } from '../services/loteAnimalService.js';
 import { handleError } from '../utils/errorHandler.js';
 
 const ESPECIES = ['BOVINO', 'PORCINO', 'OVINO', 'CAPRINO', 'EQUINO'];
@@ -172,6 +172,31 @@ export const registrarNuevoLoteAnimal = async (req, res) => {
       });
     }
 
+    return handleError(res, error);
+  }
+};
+
+
+export const consultarLotes = async (req, res) => {
+  try {
+    const idNegocio = req.query?.id_negocio ? Number(req.query.id_negocio) : null;
+    const idEmpleado = req.query?.id_empleado ? Number(req.query.id_empleado) : null;
+
+    if (req.query?.id_negocio && !Number.isInteger(idNegocio)) {
+      return res.status(400).json({ success: false, error: 'id_negocio no es valido.' });
+    }
+
+    if (req.query?.id_empleado && !Number.isInteger(idEmpleado)) {
+      return res.status(400).json({ success: false, error: 'id_empleado no es valido.' });
+    }
+
+    const lotes = await obtenerLotes({ idNegocio, idEmpleado });
+
+    return res.status(200).json({
+      success: true,
+      data: lotes,
+    });
+  } catch (error) {
     return handleError(res, error);
   }
 };
