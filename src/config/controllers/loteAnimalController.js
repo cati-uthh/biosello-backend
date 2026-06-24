@@ -1,4 +1,4 @@
-import { obtenerLotes, registrarLoteAnimal } from '../services/loteAnimalService.js';
+import { actualizarLoteAnimal, cambiarEstadoLote, eliminarLote, obtenerLotes, registrarLoteAnimal } from '../services/loteAnimalService.js';
 import { handleError } from '../utils/errorHandler.js';
 
 const ESPECIES = ['BOVINO', 'PORCINO', 'OVINO', 'CAPRINO', 'EQUINO'];
@@ -144,6 +144,66 @@ const normalizarDatos = (datos) => ({
   },
 });
 
+
+const validarActualizacionLoteAnimal = (datos) => {
+  const errores = [];
+  const lote = datos.lote || {};
+  const animal = datos.animal || {};
+
+  validarRequerido(lote, 'codigo_lote', 'El codigo de lote es obligatorio.', errores);
+  validarRequerido(lote, 'tipo_corte', 'El tipo de corte es obligatorio.', errores);
+  validarEnum(ESTADOS_LOTE, lote.estado, 'estado', errores);
+
+  if (!numeroPositivo(lote.peso_kg)) {
+    errores.push('El peso del lote debe ser mayor a 0.');
+  }
+  if (!fechaValida(lote.fecha_ingreso)) {
+    errores.push('La fecha de ingreso debe usar formato AAAA-MM-DD.');
+  }
+  if (!fechaValida(lote.fecha_vencimiento)) {
+    errores.push('La fecha de vencimiento debe usar formato AAAA-MM-DD.');
+  }
+  if (
+    fechaValida(lote.fecha_ingreso) &&
+    fechaValida(lote.fecha_vencimiento) &&
+    new Date(lote.fecha_vencimiento) < new Date(lote.fecha_ingreso)
+  ) {
+    errores.push('La fecha de vencimiento no puede ser anterior a la fecha de ingreso.');
+  }
+
+  validarRequerido(animal, 'num_arete', 'El numero de arete es obligatorio.', errores);
+  validarEnum(SEXOS, animal.sexo, 'sexo', errores);
+  validarEnum(CLASIFICACIONES, animal.clasificacion, 'clasificacion', errores);
+  if (!Number.isInteger(Number(animal.meses_edad)) || Number(animal.meses_edad) < 0) {
+    errores.push('La edad del animal debe ser un numero entero mayor o igual a 0.');
+  }
+
+  return errores;
+};
+
+const normalizarActualizacionLoteAnimal = (datos) => {
+  const lote = datos.lote || {};
+  const animal = datos.animal || {};
+
+  return {
+    lote: {
+      codigo_lote: texto(lote.codigo_lote),
+      tipo_corte: texto(lote.tipo_corte),
+      peso_kg: Number(lote.peso_kg),
+      fecha_ingreso: texto(lote.fecha_ingreso),
+      fecha_vencimiento: texto(lote.fecha_vencimiento),
+      estado: texto(lote.estado).toLowerCase(),
+    },
+    animal: {
+      num_arete: texto(animal.num_arete),
+      sexo: texto(animal.sexo).toUpperCase(),
+      clasificacion: texto(animal.clasificacion).toUpperCase(),
+      meses_edad: Number(animal.meses_edad),
+      arete_faltante: animal.arete_faltante ? 1 : 0,
+    },
+  };
+};
+
 export const registrarNuevoLoteAnimal = async (req, res) => {
   try {
     const errores = validarDatos(req.body || {});
@@ -181,6 +241,9 @@ export const consultarLotes = async (req, res) => {
   try {
     const idNegocio = req.query?.id_negocio ? Number(req.query.id_negocio) : null;
     const idEmpleado = req.query?.id_empleado ? Number(req.query.id_empleado) : null;
+    const especie = texto(req.query?.especie).toUpperCase();
+    const estado = texto(req.query?.estado).toLowerCase();
+    const fechaIngreso = texto(req.query?.fecha_ingreso);
 
     if (req.query?.id_negocio && !Number.isInteger(idNegocio)) {
       return res.status(400).json({ success: false, error: 'id_negocio no es valido.' });
@@ -190,13 +253,156 @@ export const consultarLotes = async (req, res) => {
       return res.status(400).json({ success: false, error: 'id_empleado no es valido.' });
     }
 
-    const lotes = await obtenerLotes({ idNegocio, idEmpleado });
+    if (especie && !ESPECIES.includes(especie)) {
+      return res.status(400).json({ success: false, error: 'especie no es valida.' });
+    }
+
+    if (estado && !ESTADOS_LOTE.includes(estado)) {
+      return res.status(400).json({ success: false, error: 'estado no es valido.' });
+    }
+
+    if (fechaIngreso && !fechaValida(fechaIngreso)) {
+      return res.status(400).json({ success: false, error: 'fecha_ingreso debe usar formato AAAA-MM-DD.' });
+    }
+
+    const lotes = await obtenerLotes({
+      idNegocio,
+      idEmpleado,
+      especie: especie || null,
+      estado: estado || null,
+      fechaIngreso: fechaIngreso || null,
+    });
 
     return res.status(200).json({
       success: true,
       data: lotes,
     });
   } catch (error) {
+    return handleError(res, error);
+  }
+};
+
+export const actualizarEstadoLote = async (req, res) => {
+  try {
+    const idLote = Number(req.body?.id_lote);
+    const estado = texto(req.body?.estado).toLowerCase();
+    const idUsuario = req.body?.id_usuario ? Number(req.body.id_usuario) : null;
+
+    if (!Number.isInteger(idLote) || idLote <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'id_lote no es valido.',
+      });
+    }
+
+    if (!ESTADOS_LOTE.includes(estado)) {
+      return res.status(400).json({
+        success: false,
+        error: 'estado no es valido.',
+      });
+    }
+
+    if (req.body?.id_usuario && (!Number.isInteger(idUsuario) || idUsuario <= 0)) {
+      return res.status(400).json({
+        success: false,
+        error: 'id_usuario no es valido.',
+      });
+    }
+
+    const resultado = await cambiarEstadoLote({ idLote, estado, idUsuario });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Estado del lote actualizado correctamente.',
+      data: resultado,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        error: error.message || 'La solicitud no pudo procesarse.',
+        code: error.code || 'REQUEST_ERROR',
+      });
+    }
+
+    return handleError(res, error);
+  }
+};
+
+
+export const editarLoteAnimal = async (req, res) => {
+  try {
+    const idLote = Number(req.body?.id_lote);
+    const idUsuario = req.body?.id_usuario ? Number(req.body.id_usuario) : null;
+
+    if (!Number.isInteger(idLote) || idLote <= 0) {
+      return res.status(400).json({ success: false, error: 'id_lote no es valido.' });
+    }
+
+    if (req.body?.id_usuario && (!Number.isInteger(idUsuario) || idUsuario <= 0)) {
+      return res.status(400).json({ success: false, error: 'id_usuario no es valido.' });
+    }
+
+    const datosNormalizados = normalizarActualizacionLoteAnimal(req.body || {});
+    const errores = validarActualizacionLoteAnimal(datosNormalizados);
+
+    if (errores.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Datos invalidos para actualizar lote/animal.',
+        details: errores,
+      });
+    }
+
+    const resultado = await actualizarLoteAnimal({
+      idLote,
+      idUsuario,
+      lote: datosNormalizados.lote,
+      animal: datosNormalizados.animal,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Lote actualizado correctamente.',
+      data: resultado,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        error: error.message || 'La solicitud no pudo procesarse.',
+        code: error.code || 'REQUEST_ERROR',
+      });
+    }
+
+    return handleError(res, error);
+  }
+};
+
+export const eliminarLoteAnimal = async (req, res) => {
+  try {
+    const idLote = Number(req.query?.id_lote || req.body?.id_lote);
+
+    if (!Number.isInteger(idLote) || idLote <= 0) {
+      return res.status(400).json({ success: false, error: 'id_lote no es valido.' });
+    }
+
+    const resultado = await eliminarLote({ idLote });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Lote eliminado correctamente.',
+      data: resultado,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        error: error.message || 'La solicitud no pudo procesarse.',
+        code: error.code || 'REQUEST_ERROR',
+      });
+    }
+
     return handleError(res, error);
   }
 };
