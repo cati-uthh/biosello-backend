@@ -3,7 +3,7 @@ import { handleError } from '../utils/errorHandler.js';
 
 const ESPECIES = ['BOVINO', 'PORCINO', 'OVINO', 'CAPRINO', 'EQUINO'];
 const SEXOS = ['MACHO', 'HEMBRA'];
-const CLASIFICACIONES = ['VAQUILLA', 'VACA', 'TORETE', 'TORO', 'BECERRO', 'BECERRA', 'BUEY'];
+const CLASIFICACIONES = ['VAQUILLA', 'VACA', 'TORETE', 'TORO', 'BECERRO', 'BECERRA', 'BUEY', 'LECHON', 'CERDO_ENGORDA', 'MARRANA', 'SEMENTAL'];
 const MOTIVOS = ['SACRIFICIO', 'ENGORDA', 'REPRODUCCION', 'EXPOSICION', 'VENTA'];
 const ESTADOS_LOTE = ['activo', 'procesado', 'vendido', 'caducado'];
 
