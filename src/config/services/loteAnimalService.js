@@ -195,6 +195,7 @@ const insertarLote = async (connection, lote, idAnimal) => {
         codigo_lote,
         tipo_corte,
         peso_kg,
+        peso_actual,
         fecha_ingreso,
         fecha_vencimiento,
         estado,
@@ -208,6 +209,7 @@ const insertarLote = async (connection, lote, idAnimal) => {
     [
       lote.codigo_lote,
       lote.tipo_corte,
+      lote.peso_kg,
       lote.peso_kg,
       lote.fecha_ingreso,
       lote.fecha_vencimiento,
