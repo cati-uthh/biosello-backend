@@ -204,7 +204,7 @@ const insertarLote = async (connection, lote, idAnimal) => {
         id_negocio,
         id_empleado
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) /* <-- UN SIGNO DE INTERROGACIÓN EXTRA */
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
     `,
     [
       lote.codigo_lote,
@@ -214,7 +214,7 @@ const insertarLote = async (connection, lote, idAnimal) => {
       lote.fecha_ingreso,
       lote.fecha_vencimiento,
       lote.estado,
-      lote.tip_recomendacion, // <-- NUEVO VALOR
+      lote.tip_recomendacion,
       idAnimal,
       idNegocio,
       idEmpleado,
@@ -312,6 +312,7 @@ export const obtenerLotes = async ({
           l.codigo_lote,
           l.tipo_corte,
           l.peso_kg,
+          l.peso_actual,
           DATE_FORMAT(l.fecha_ingreso, '%Y-%m-%d') AS fecha_ingreso,
           DATE_FORMAT(l.fecha_vencimiento, '%Y-%m-%d') AS fecha_vencimiento,
           l.estado,
@@ -577,6 +578,66 @@ export const eliminarLote = async ({ idLote }) => {
     await connection.commit();
 
     return { id_lote: idLote };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
+export const registrarSalidaLote = async ({ idLote, pesoSalida }) => {
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    // Bloqueamos la fila (FOR UPDATE) para evitar que dos usuarios descuenten al mismo tiempo
+    const [lotes] = await connection.execute(
+      'SELECT peso_actual, estado FROM lote WHERE id_lote = ? FOR UPDATE',
+      [idLote]
+    );
+
+    if (lotes.length === 0) {
+      throw crearError('El lote indicado no existe.', 404, 'LOTE_NOT_FOUND');
+    }
+
+    const lote = lotes[0];
+
+    // Validación de negocio: no puedes vender más de lo que tienes
+    if (Number(lote.peso_actual) < pesoSalida) {
+      throw crearError(`Stock insuficiente. Solo quedan ${lote.peso_actual} kg.`, 400, 'STOCK_INSUFICIENTE');
+    }
+
+    // Registramos la salida para el historial
+    await connection.execute(
+      'INSERT INTO salida_lote (id_lote, peso_salida) VALUES (?, ?)',
+      [idLote, pesoSalida]
+    );
+
+    // Calculamos el nuevo peso
+    const nuevoPeso = Number(lote.peso_actual) - pesoSalida;
+    let nuevoEstado = lote.estado;
+
+    // Si se acabó, lo marcamos como vendido
+    if (nuevoPeso <= 0) {
+      nuevoEstado = 'vendido';
+    }
+
+    // Actualizamos el lote
+    await connection.execute(
+      'UPDATE lote SET peso_actual = ?, estado = ? WHERE id_lote = ?',
+      [nuevoPeso, nuevoEstado, idLote]
+    );
+
+    await connection.commit();
+
+    return {
+      id_lote: idLote,
+      peso_descontado: pesoSalida,
+      peso_restante: nuevoPeso,
+      estado: nuevoEstado
+    };
   } catch (error) {
     await connection.rollback();
     throw error;

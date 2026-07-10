@@ -407,3 +407,36 @@ export const eliminarLoteAnimal = async (req, res) => {
     return handleError(res, error);
   }
 };
+// No olvides importar la función arriba: import { registrarSalidaLote } from '../services/loteAnimalService.js';
+
+export const registrarSalida = async (req, res) => {
+  try {
+    const idLote = Number(req.body?.id_lote);
+    const pesoSalida = Number(req.body?.peso_salida);
+
+    if (!Number.isInteger(idLote) || idLote <= 0) {
+      return res.status(400).json({ success: false, error: 'id_lote no es válido.' });
+    }
+
+    if (isNaN(pesoSalida) || pesoSalida <= 0) {
+      return res.status(400).json({ success: false, error: 'peso_salida debe ser un número mayor a 0.' });
+    }
+
+    const resultado = await registrarSalidaLote({ idLote, pesoSalida });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Salida de inventario registrada correctamente.',
+      data: resultado,
+    });
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        error: error.message || 'La solicitud no pudo procesarse.',
+        code: error.code || 'REQUEST_ERROR',
+      });
+    }
+    return handleError(res, error);
+  }
+};
