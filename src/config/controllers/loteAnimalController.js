@@ -1,4 +1,4 @@
-import { actualizarLoteAnimal, cambiarEstadoLote, eliminarLote, obtenerLotes, registrarLoteAnimal } from '../services/loteAnimalService.js';
+import { actualizarLoteAnimal, cambiarEstadoLote, eliminarLote, obtenerLotes, registrarLoteAnimal, registrarSalidaLote} from '../services/loteAnimalService.js';
 import { handleError } from '../utils/errorHandler.js';
 
 const ESPECIES = ['BOVINO', 'PORCINO', 'OVINO', 'CAPRINO', 'EQUINO'];
