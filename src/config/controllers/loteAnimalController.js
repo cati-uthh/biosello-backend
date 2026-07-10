@@ -139,6 +139,7 @@ const normalizarDatos = (datos) => ({
     fecha_ingreso: texto(datos.lote.fecha_ingreso),
     fecha_vencimiento: texto(datos.lote.fecha_vencimiento),
     estado: datos.lote.estado,
+    tip_recomendacion: texto(datos.lote.tip_recomendacion) || null, 
     id_negocio: datos.lote.id_negocio || null,
     id_empleado: datos.lote.id_empleado || null,
   },

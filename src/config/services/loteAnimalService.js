@@ -198,11 +198,12 @@ const insertarLote = async (connection, lote, idAnimal) => {
         fecha_ingreso,
         fecha_vencimiento,
         estado,
+        tip_recomendacion, /* <-- NUEVA COLUMNA */
         id_animal,
         id_negocio,
         id_empleado
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) /* <-- UN SIGNO DE INTERROGACIÓN EXTRA */
     `,
     [
       lote.codigo_lote,
@@ -211,12 +212,12 @@ const insertarLote = async (connection, lote, idAnimal) => {
       lote.fecha_ingreso,
       lote.fecha_vencimiento,
       lote.estado,
+      lote.tip_recomendacion, // <-- NUEVO VALOR
       idAnimal,
       idNegocio,
       idEmpleado,
     ]
   );
-
   return result.insertId;
 };
 
@@ -312,6 +313,7 @@ export const obtenerLotes = async ({
           DATE_FORMAT(l.fecha_ingreso, '%Y-%m-%d') AS fecha_ingreso,
           DATE_FORMAT(l.fecha_vencimiento, '%Y-%m-%d') AS fecha_vencimiento,
           l.estado,
+          l.tip_recomendacion,
           l.id_negocio,
           l.id_empleado,
           a.id_animal,
