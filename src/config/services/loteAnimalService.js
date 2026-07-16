@@ -199,10 +199,10 @@ const insertarLote = async (connection, lote, idAnimal) => {
         fecha_ingreso,
         fecha_vencimiento,
         estado,
-        tip_recomendacion, /* <-- NUEVA COLUMNA */
         id_animal,
         id_negocio,
-        id_empleado
+        id_empleado,
+        tip_recomendacion
       )
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
     `,
@@ -214,10 +214,10 @@ const insertarLote = async (connection, lote, idAnimal) => {
       lote.fecha_ingreso,
       lote.fecha_vencimiento,
       lote.estado,
-      lote.tip_recomendacion,
       idAnimal,
       idNegocio,
       idEmpleado,
+      lote.tip_recomendacion
     ]
   );
   return result.insertId;
