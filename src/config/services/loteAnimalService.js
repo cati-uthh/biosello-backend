@@ -204,7 +204,7 @@ const insertarLote = async (connection, lote, idAnimal) => {
         id_empleado,
         tip_recomendacion
       )
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
     `,
     [
       lote.codigo_lote,
