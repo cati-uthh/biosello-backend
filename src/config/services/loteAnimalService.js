@@ -275,6 +275,14 @@ export const obtenerLotes = async ({
   const connection = await pool.getConnection();
 
   try {
+
+    // Antes de leer, se caduca automáticamente los lotes activos que ya pasaron su fecha.
+    await connection.execute(`
+      UPDATE lote 
+      SET estado = 'caducado' 
+      WHERE estado = 'activo' AND fecha_vencimiento < CURDATE()
+    `);
+
     const filtros = [];
     const params = [];
 
@@ -419,6 +427,10 @@ export const cambiarEstadoLote = async ({ idLote, estado, idUsuario = null }) =>
     }
 
     const estadoAnterior = lotes[0].estado;
+    
+    if (estadoAnterior === 'caducado' && estado !== 'caducado') {
+      throw crearError('Por seguridad sanitaria, un lote caducado ha sido bloqueado permanentemente y no puede volver a activarse.', 403, 'LOTE_BLOQUEADO');
+    }
 
     if (estadoAnterior === estado) {
       await connection.commit();
