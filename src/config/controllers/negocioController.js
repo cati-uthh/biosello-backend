@@ -17,13 +17,46 @@ export const registrarNuevoNegocio = async (req, res) => {
     const datosEnvio = req.body || {};
     const errores = [];
 
-    if (texto(datosEnvio.nombre).length < 3) errores.push('El nombre del propietario debe tener al menos 3 caracteres.');
-    if (!emailRegex.test(texto(datosEnvio.email))) errores.push('El correo electrónico no tiene un formato válido.');
-    if (!/^\d{10}$/.test(texto(datosEnvio.telefono))) errores.push('El teléfono debe tener 10 dígitos.');
-    if (!passwordValida(datosEnvio.contrasena)) errores.push('La contraseña debe tener mínimo 8 caracteres, mayúscula, minúscula y número.');
-    if (!texto(datosEnvio.nombre_negocio)) errores.push('El nombre del negocio es obligatorio.');
-    if (!texto(datosEnvio.direccion)) errores.push('La dirección del negocio es obligatoria.');
-    if (!rfcRegex.test(texto(datosEnvio.rfc).toUpperCase())) errores.push('El RFC no tiene un formato válido.');
+    const nombreLimpio = texto(datosEnvio.nombre);
+    if (nombreLimpio.length < 3 || nombreLimpio.length > 150) {
+        errores.push('El nombre del propietario debe tener entre 3 y 150 caracteres.');
+    }
+    
+    const emailLimpio = texto(datosEnvio.email);
+    if (emailLimpio.length > 100 || !emailRegex.test(emailLimpio)) {
+        errores.push('El correo electrónico no tiene un formato válido o excede los 100 caracteres.');
+    }
+    
+    if (!/^\d{10}$/.test(texto(datosEnvio.telefono))) {
+        errores.push('El teléfono debe tener exactamente 10 dígitos.');
+    }
+    
+    if (!passwordValida(datosEnvio.contrasena)) {
+        errores.push('La contraseña debe tener mínimo 8 caracteres, mayúscula, minúscula y número.');
+    }
+    
+    const nombreNegocioLimpio = texto(datosEnvio.nombre_negocio);
+    if (!nombreNegocioLimpio || nombreNegocioLimpio.length > 150) {
+        errores.push('El nombre del negocio es obligatorio y no debe exceder 150 caracteres.');
+    }
+    
+    const direccionLimpia = texto(datosEnvio.direccion);
+    if (!direccionLimpia || direccionLimpia.length > 255) {
+        errores.push('La dirección del negocio es obligatoria y no debe exceder 255 caracteres.');
+    }
+    
+    if (!rfcRegex.test(texto(datosEnvio.rfc).toUpperCase())) {
+        errores.push('El RFC no tiene un formato válido.');
+    }
+
+    if (!datosEnvio.archivoBase64 || !datosEnvio.nombreArchivo) {
+      errores.push('Es obligatorio adjuntar el documento (Aviso COFEPRIS o SAT).');
+    } else {
+      const sizeInMB = (datosEnvio.archivoBase64.length * 0.75) / (1024 * 1024);
+      if (sizeInMB > 8) {
+        errores.push('El documento adjunto es demasiado grande. El máximo permitido es de 8 MB.');
+      }
+    }
 
     if (errores.length > 0) {
       return res.status(400).json({
@@ -35,7 +68,7 @@ export const registrarNuevoNegocio = async (req, res) => {
 
     await registrarNegocio({
       ...datosEnvio,
-      email: texto(datosEnvio.email).toLowerCase(),
+      email: emailLimpio.toLowerCase(),
       rfc: texto(datosEnvio.rfc).toUpperCase()
     });
 
