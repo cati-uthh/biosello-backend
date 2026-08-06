@@ -1,10 +1,11 @@
 import pool from '../src/config/db.js';
 import { put } from '@vercel/blob';
+import bcrypt from 'bcryptjs';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
@@ -13,7 +14,7 @@ export default async function handler(req, res) {
   try {
     connection = await pool.getConnection();
 
-    // GET: Obtener sucursales del negocio principal
+    // GET: Obtener sucursales
     if (req.method === 'GET') {
       const idNegocio = Number(req.query.id_negocio);
       if (!idNegocio) {
@@ -27,7 +28,8 @@ export default async function handler(req, res) {
           COALESCE(nombre_sucursal, 'Matriz') AS nombre_sucursal, 
           municipio, 
           direccion,
-          estatus_verificacion
+          estatus_verificacion,
+          id_negocio_padre
         FROM negocio 
         WHERE id_negocio = ? OR id_negocio_padre = ?
         ORDER BY id_negocio ASC
@@ -37,7 +39,7 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, data: rows });
     }
 
-    // POST: Registrar nueva sucursal con documento
+    // POST: Registrar sucursal
     if (req.method === 'POST') {
       const { id_negocio_matriz, nombre_sucursal, municipio, direccion, archivoBase64, nombreArchivo } = req.body || {};
 
@@ -46,8 +48,6 @@ export default async function handler(req, res) {
       }
 
       let documentoUrlFinal = null;
-
-      // Subida a Vercel Blob
       if (archivoBase64 && nombreArchivo) {
         const buffer = Buffer.from(archivoBase64, 'base64');
         const blob = await put(`documentos/sucursales/${Date.now()}-${nombreArchivo}`, buffer, {
@@ -85,12 +85,78 @@ export default async function handler(req, res) {
       return res.status(201).json({
         success: true,
         message: 'Sucursal registrada exitosamente.',
-        data: {
-          id_negocio: result.insertId,
-          nombre_sucursal,
-          direccion,
-          estatus_verificacion: 'pendiente'
-        }
+        data: { id_negocio: result.insertId, nombre_sucursal, direccion, estatus_verificacion: 'pendiente' }
+      });
+    }
+
+    // PUT: Modificar sucursal (pasa a estatus 'pendiente' de re-verificación)
+    if (req.method === 'PUT') {
+      const { id_sucursal, nombre_sucursal, direccion, municipio, archivoBase64, nombreArchivo } = req.body || {};
+
+      if (!id_sucursal || !nombre_sucursal || !direccion) {
+        return res.status(400).json({ success: false, error: 'Datos incompletos para actualizar.' });
+      }
+
+      let documentoUrlFinal = null;
+      if (archivoBase64 && nombreArchivo) {
+        const buffer = Buffer.from(archivoBase64, 'base64');
+        const blob = await put(`documentos/sucursales/${Date.now()}-${nombreArchivo}`, buffer, {
+          access: 'private',
+        });
+        documentoUrlFinal = blob.url;
+      }
+
+      let queryUpdate = `
+        UPDATE negocio 
+        SET nombre_sucursal = ?, direccion = ?, municipio = ?, estatus_verificacion = 'pendiente'
+      `;
+      const params = [nombre_sucursal.trim(), direccion.trim(), municipio?.trim() || 'Huejutla de Reyes'];
+
+      if (documentoUrlFinal) {
+        queryUpdate += `, documento_url = ?`;
+        params.push(documentoUrlFinal);
+      }
+
+      queryUpdate += ` WHERE id_negocio = ?`;
+      params.push(id_sucursal);
+
+      await connection.execute(queryUpdate, params);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Sucursal actualizada. Ha vuelto a estado pendiente de verificación.'
+      });
+    }
+
+    // DELETE: Eliminar sucursal previa verificación de contraseña del dueño
+    if (req.method === 'DELETE') {
+      const { id_sucursal, id_usuario, contrasena } = req.body || {};
+
+      if (!id_sucursal || !id_usuario || !contrasena) {
+        return res.status(400).json({ success: false, error: 'Ingresa tu contraseña para confirmar el borrado.' });
+      }
+
+      // Validar identidad del usuario
+      const [userRows] = await connection.execute(
+        'SELECT contrasena_hash FROM usuario WHERE id_usuario = ? LIMIT 1',
+        [id_usuario]
+      );
+
+      if (userRows.length === 0) {
+        return res.status(404).json({ success: false, error: 'Usuario no encontrado.' });
+      }
+
+      const contrasenaValida = await bcrypt.compare(contrasena, userRows[0].contrasena_hash);
+      if (!contrasenaValida) {
+        return res.status(401).json({ success: false, error: 'Contraseña incorrecta. No se pudo eliminar la sucursal.' });
+      }
+
+      // Eliminar la sucursal (por CASCADE se eliminan lotes o registros vinculados)
+      await connection.execute('DELETE FROM negocio WHERE id_negocio = ?', [id_sucursal]);
+
+      return res.status(200).json({
+        success: true,
+        message: 'Sucursal eliminada permanentemente.'
       });
     }
 
