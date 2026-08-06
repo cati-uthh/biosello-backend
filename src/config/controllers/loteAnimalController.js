@@ -73,7 +73,7 @@ const validarDatos = (datos) => {
     errores.push('La edad del animal debe ser un numero entero mayor o igual a 0.');
   }
 
-  validarRequerido(lote, 'codigo_lote', 'El codigo de lote es obligatorio.', errores);
+  if (!texto(lote.codigo_lote)) { lote.codigo_lote = 'AUTO';}
   validarRequerido(lote, 'tipo_corte', 'El tipo de corte es obligatorio.', errores);
   validarEnum(ESTADOS_LOTE, lote.estado, 'estado', errores);
   if (!numeroPositivo(lote.peso_kg)) {

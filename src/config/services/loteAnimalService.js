@@ -176,14 +176,52 @@ const validarRelacionEmpleado = async (connection, idEmpleado) => {
   return idEmpleado;
 };
 
-const insertarLote = async (connection, lote, idAnimal) => {
-  const [existente] = await connection.execute(
-    'SELECT id_lote FROM lote WHERE codigo_lote = ? LIMIT 1',
-    [lote.codigo_lote]
+// Generador automático de lote: LOT-YYYY-MM-001
+const generarCodigoLoteAutomatico = async (connection, fechaIngreso) => {
+  const fechaObj = fechaIngreso ? new Date(fechaIngreso) : new Date();
+  const anio = fechaObj.getFullYear();
+  const mes = String(fechaObj.getMonth() + 1).padStart(2, '0');
+  const prefijo = `LOT-${anio}-${mes}-`;
+
+  const [rows] = await connection.execute(
+    `
+      SELECT codigo_lote 
+      SELECT codigo_lote FROM lote 
+      WHERE codigo_lote LIKE ? 
+      ORDER BY id_lote DESC 
+      LIMIT 1
+    `,
+    [`${prefijo}%`]
   );
 
-  if (existente.length > 0) {
-    throw crearError('El codigo de lote ya se encuentra registrado.', 409, 'LOTE_DUPLICADO');
+  let consecutivo = 1;
+  if (rows.length > 0) {
+    const ultimoCodigo = rows[0].codigo_lote;
+    const partes = ultimoCodigo.split('-');
+    const ultimoNumero = parseInt(partes[partes.length - 1], 10);
+    if (!isNaN(ultimoNumero)) {
+      consecutivo = ultimoNumero + 1;
+    }
+  }
+
+  return `${prefijo}${String(consecutivo).padStart(3, '0')}`;
+};
+
+const insertarLote = async (connection, lote, idAnimal) => {
+  let codigoFinal = String(lote.codigo_lote || '').trim();
+
+  // Generación automática si viene vacío o se indica auto-generación
+  if (!codigoFinal || codigoFinal.toUpperCase() === 'AUTO') {
+    codigoFinal = await generarCodigoLoteAutomatico(connection, lote.fecha_ingreso);
+  } else {
+    const [existente] = await connection.execute(
+      'SELECT id_lote FROM lote WHERE codigo_lote = ? LIMIT 1',
+      [codigoFinal]
+    );
+
+    if (existente.length > 0) {
+      throw crearError('El código de lote ya se encuentra registrado.', 409, 'LOTE_DUPLICADO');
+    }
   }
 
   const idNegocio = await validarRelacionNegocio(connection, lote.id_negocio);
@@ -207,7 +245,7 @@ const insertarLote = async (connection, lote, idAnimal) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) 
     `,
     [
-      lote.codigo_lote,
+      codigoFinal,
       lote.tipo_corte,
       lote.peso_kg,
       lote.peso_kg,
@@ -220,7 +258,8 @@ const insertarLote = async (connection, lote, idAnimal) => {
       lote.tip_recomendacion
     ]
   );
-  return result.insertId;
+
+  return { insertId: result.insertId, codigoFinal };
 };
 
 export const registrarLoteAnimal = async (datos) => {
@@ -234,7 +273,8 @@ export const registrarLoteAnimal = async (datos) => {
     const idRastro = await obtenerIdRastro(connection, datos.rastro);
     const idAnimal = await obtenerIdAnimal(connection, datos.animal, idOrigen, idPropietario);
     const idGuia = await obtenerIdGuia(connection, datos.guia_transito, idPropietario, idRastro);
-    const idLote = await insertarLote(connection, datos.lote, idAnimal);
+    
+    const { insertId: idLote, codigoFinal } = await insertarLote(connection, datos.lote, idAnimal);
 
     await connection.execute(
       `
@@ -248,7 +288,7 @@ export const registrarLoteAnimal = async (datos) => {
 
     return {
       id_lote: idLote,
-      codigo_lote: datos.lote.codigo_lote,
+      codigo_lote: codigoFinal,
       id_animal: idAnimal,
       num_arete: datos.animal.num_arete,
       id_guia: idGuia,
@@ -275,8 +315,6 @@ export const obtenerLotes = async ({
   const connection = await pool.getConnection();
 
   try {
-
-    // Antes de leer, se caduca automáticamente los lotes activos que ya pasaron su fecha.
     await connection.execute(`
       UPDATE lote 
       SET estado = 'caducado' 
@@ -360,7 +398,6 @@ export const obtenerLotes = async ({
     connection.release();
   }
 };
-
 
 const obtenerLotePorId = async (connection, idLote) => {
   const [rows] = await connection.execute(
@@ -469,7 +506,6 @@ export const cambiarEstadoLote = async ({ idLote, estado, idUsuario = null }) =>
   }
 };
 
-
 export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = null }) => {
   const connection = await pool.getConnection();
 
@@ -493,7 +529,7 @@ export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = n
     );
 
     if (loteDuplicado.length > 0) {
-      throw crearError('El codigo de lote ya se encuentra registrado.', 409, 'LOTE_DUPLICADO');
+      throw crearError('El código de lote ya se encuentra registrado.', 409, 'LOTE_DUPLICADO');
     }
 
     await connection.execute(
@@ -525,7 +561,7 @@ export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = n
       );
 
       if (animalDuplicado.length > 0) {
-        throw crearError('El numero de arete ya se encuentra registrado.', 409, 'ANIMAL_DUPLICADO');
+        throw crearError('El número de arete ya se encuentra registrado.', 409, 'ANIMAL_DUPLICADO');
       }
 
       await connection.execute(
@@ -604,7 +640,6 @@ export const registrarSalidaLote = async ({ idLote, pesoSalida }) => {
   try {
     await connection.beginTransaction();
 
-    // Bloqueamos la fila (FOR UPDATE) para evitar que dos usuarios descuenten al mismo tiempo
     const [lotes] = await connection.execute(
       'SELECT peso_actual, estado FROM lote WHERE id_lote = ? FOR UPDATE',
       [idLote]
@@ -616,27 +651,22 @@ export const registrarSalidaLote = async ({ idLote, pesoSalida }) => {
 
     const lote = lotes[0];
 
-    // Validación de negocio: no puedes vender más de lo que tienes
     if (Number(lote.peso_actual) < pesoSalida) {
       throw crearError(`Stock insuficiente. Solo quedan ${lote.peso_actual} kg.`, 400, 'STOCK_INSUFICIENTE');
     }
 
-    // Registramos la salida para el historial
     await connection.execute(
       'INSERT INTO salida_lote (id_lote, peso_salida) VALUES (?, ?)',
       [idLote, pesoSalida]
     );
 
-    // Calculamos el nuevo peso
     const nuevoPeso = Number(lote.peso_actual) - pesoSalida;
     let nuevoEstado = lote.estado;
 
-    // Si se acabó, lo marcamos como vendido
     if (nuevoPeso <= 0) {
       nuevoEstado = 'vendido';
     }
 
-    // Actualizamos el lote
     await connection.execute(
       'UPDATE lote SET peso_actual = ?, estado = ? WHERE id_lote = ?',
       [nuevoPeso, nuevoEstado, idLote]

@@ -15,11 +15,11 @@ export default async function handler(req, res) {
         return res.status(405).json({ success: false, error: 'Método no permitido.' });
     }
 
-    const email = String(req.body?.email || '').trim().toLowerCase();
+    const identificador = String(req.body?.email || req.body?.identificador || '').trim().toLowerCase();
     const contrasena = String(req.body?.contrasena || '');
 
-    if (!email || !contrasena) {
-        return res.status(400).json({ success: false, error: 'Ingresa correo electrónico y contraseña.' });
+    if (!identificador || !contrasena) {
+        return res.status(400).json({ success: false, error: 'Ingresa correo o teléfono y tu contraseña.' });
     }
 
     let connection;
@@ -27,6 +27,7 @@ export default async function handler(req, res) {
     try {
         connection = await pool.getConnection();
 
+        // Permite buscar por correo electrónico o número de teléfono de 10 dígitos
         const query = `
             SELECT
                 u.id_usuario,
@@ -41,14 +42,14 @@ export default async function handler(req, res) {
                 n.estatus_verificacion
             FROM usuario u
             LEFT JOIN negocio n ON u.id_usuario = n.id_admin
-            WHERE u.email = ?
+            WHERE u.email = ? OR u.telefono = ?
             LIMIT 1
         `;
 
-        const [rows] = await connection.execute(query, [email]);
+        const [rows] = await connection.execute(query, [identificador, identificador]);
 
         if (rows.length === 0) {
-            return res.status(401).json({ success: false, error: 'No existe una cuenta registrada con ese correo.' });
+            return res.status(401).json({ success: false, error: 'No existe una cuenta registrada con esas credenciales.' });
         }
 
         const usuario = rows[0];
@@ -60,7 +61,7 @@ export default async function handler(req, res) {
         const contrasenaValida = await bcrypt.compare(contrasena, usuario.contrasena_hash);
 
         if (!contrasenaValida) {
-            return res.status(401).json({ success: false, error: 'La contraseña no es correcta.' });
+            return res.status(401).json({ success: false, error: 'La contraseña es incorrecta.' });
         }
 
         return res.status(200).json({
