@@ -1,4 +1,5 @@
 import pool from '../src/config/db.js';
+import { put } from '@vercel/blob';
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Credentials', true);
@@ -19,14 +20,14 @@ export default async function handler(req, res) {
         return res.status(400).json({ success: false, error: 'id_negocio es requerido' });
       }
 
-      // Buscamos el negocio raíz (Matriz) y todas sus sucursales hijas
       const query = `
         SELECT 
           id_negocio, 
           nombre_negocio, 
           COALESCE(nombre_sucursal, 'Matriz') AS nombre_sucursal, 
           municipio, 
-          direccion 
+          direccion,
+          estatus_verificacion
         FROM negocio 
         WHERE id_negocio = ? OR id_negocio_padre = ?
         ORDER BY id_negocio ASC
@@ -36,15 +37,25 @@ export default async function handler(req, res) {
       return res.status(200).json({ success: true, data: rows });
     }
 
-    // POST: Registrar una nueva sucursal
+    // POST: Registrar nueva sucursal con documento
     if (req.method === 'POST') {
-      const { id_negocio_matriz, nombre_sucursal, municipio, direccion } = req.body || {};
+      const { id_negocio_matriz, nombre_sucursal, municipio, direccion, archivoBase64, nombreArchivo } = req.body || {};
 
-      if (!id_negocio_matriz || !nombre_sucursal || !direccion) {
-        return res.status(400).json({ success: false, error: 'Proporcione el nombre de sucursal y la dirección.' });
+      if (!id_negocio_matriz || !nombre_sucursal || !direccion || !archivoBase64) {
+        return res.status(400).json({ success: false, error: 'Ingresa el nombre, dirección y adjunta el documento.' });
       }
 
-      // Obtenemos los datos de la matriz para heredar RFC y Administrador
+      let documentoUrlFinal = null;
+
+      // Subida a Vercel Blob
+      if (archivoBase64 && nombreArchivo) {
+        const buffer = Buffer.from(archivoBase64, 'base64');
+        const blob = await put(`documentos/sucursales/${Date.now()}-${nombreArchivo}`, buffer, {
+          access: 'private',
+        });
+        documentoUrlFinal = blob.url;
+      }
+
       const [matriz] = await connection.execute(
         'SELECT rfc, id_admin FROM negocio WHERE id_negocio = ? LIMIT 1',
         [id_negocio_matriz]
@@ -57,8 +68,8 @@ export default async function handler(req, res) {
       const { rfc, id_admin } = matriz[0];
 
       const queryInsert = `
-        INSERT INTO negocio (nombre_negocio, nombre_sucursal, municipio, direccion, rfc, estatus_verificacion, id_admin, id_negocio_padre)
-        VALUES ('Sucursal', ?, ?, ?, ?, 'aprobado', ?, ?)
+        INSERT INTO negocio (nombre_negocio, nombre_sucursal, municipio, direccion, rfc, documento_url, estatus_verificacion, id_admin, id_negocio_padre)
+        VALUES ('Sucursal', ?, ?, ?, ?, ?, 'pendiente', ?, ?)
       `;
 
       const [result] = await connection.execute(queryInsert, [
@@ -66,6 +77,7 @@ export default async function handler(req, res) {
         municipio?.trim() || 'Huejutla de Reyes',
         direccion.trim(),
         rfc,
+        documentoUrlFinal,
         id_admin,
         id_negocio_matriz
       ]);
@@ -76,7 +88,8 @@ export default async function handler(req, res) {
         data: {
           id_negocio: result.insertId,
           nombre_sucursal,
-          direccion
+          direccion,
+          estatus_verificacion: 'pendiente'
         }
       });
     }
@@ -89,3 +102,11 @@ export default async function handler(req, res) {
     if (connection) connection.release();
   }
 }
+
+export const config = {
+  api: {
+    bodyParser: {
+      sizeLimit: '10mb',
+    },
+  },
+};
