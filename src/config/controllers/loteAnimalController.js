@@ -1,4 +1,4 @@
-import { actualizarLoteAnimal, cambiarEstadoLote, eliminarLote, obtenerLotes, registrarLoteAnimal, registrarSalidaLote} from '../services/loteAnimalService.js';
+import { actualizarLoteAnimal, cambiarEstadoLote, eliminarLote, obtenerLotes, registrarLoteAnimal, registrarSalidaLote } from '../services/loteAnimalService.js';
 import { handleError } from '../utils/errorHandler.js';
 
 const ESPECIES = ['BOVINO', 'PORCINO', 'OVINO', 'CAPRINO', 'EQUINO'];
@@ -15,7 +15,7 @@ const numeroPositivo = (valor) => {
 };
 
 const validarEnum = (lista, valor, campo, errores) => {
-  if (!lista.includes(valor)) {
+  if (valor && !lista.includes(valor)) {
     errores.push(`${campo} no es valido.`);
   }
 };
@@ -26,8 +26,42 @@ const validarRequerido = (objeto, campo, mensaje, errores) => {
   }
 };
 
+// Validación ajustada: solo exige lo indispensable para la base de datos y la RA
 const validarDatos = (datos) => {
   const errores = [];
+  const guia = datos.guia_transito || {};
+  const origen = datos.origen || {};
+  const propietario = datos.propietario || {};
+  const animal = datos.animal || {};
+  const lote = datos.lote || {};
+
+  validarRequerido(guia, 'folio_guia', 'El folio de guia es obligatorio.', errores);
+  validarRequerido(origen, 'localidad_origen', 'La localidad de origen es obligatoria.', errores);
+  validarRequerido(propietario, 'nombre_propietario', 'El nombre del propietario es obligatorio.', errores);
+  validarRequerido(animal, 'num_arete', 'El numero de arete/sello es obligatorio.', errores);
+  validarEnum(ESPECIES, animal.especie, 'especie', errores);
+  validarEnum(SEXOS, animal.sexo, 'sexo', errores);
+  validarEnum(CLASIFICACIONES, animal.clasificacion, 'clasificacion', errores);
+
+  validarRequerido(lote, 'tipo_corte', 'El tipo de corte es obligatorio.', errores);
+  validarEnum(ESTADOS_LOTE, lote.estado, 'estado', errores);
+  if (!numeroPositivo(lote.peso_kg)) {
+    errores.push('El peso del lote debe ser mayor a 0.');
+  }
+  if (!fechaValida(lote.fecha_ingreso)) {
+    errores.push('La fecha de ingreso debe usar formato AAAA-MM-DD.');
+  }
+  if (!fechaValida(lote.fecha_vencimiento)) {
+    errores.push('La fecha de vencimiento debe usar formato AAAA-MM-DD.');
+  }
+
+  return errores;
+};
+
+// Normalización con valores por defecto seguros para MariaDB/MySQL
+const normalizarDatos = (datos) => {
+  const timestampUnico = Date.now().toString().slice(-6);
+
   const guia = datos.guia_transito || {};
   const origen = datos.origen || {};
   const propietario = datos.propietario || {};
@@ -35,172 +69,52 @@ const validarDatos = (datos) => {
   const animal = datos.animal || {};
   const lote = datos.lote || {};
 
-  validarRequerido(guia, 'folio_guia', 'El folio de guia es obligatorio.', errores);
-  validarRequerido(guia, 'fecha_expedicion', 'La fecha de expedicion es obligatoria.', errores);
-  validarRequerido(guia, 'centro_expedidor', 'El centro expedidor es obligatorio.', errores);
-  validarEnum(MOTIVOS, guia.motivo_movilizacion, 'motivo_movilizacion', errores);
-
-  if (guia.fecha_expedicion && !fechaValida(guia.fecha_expedicion)) {
-    errores.push('La fecha de expedicion debe usar formato AAAA-MM-DD.');
-  }
-  if (!numeroPositivo(guia.vigencia_dias)) {
-    errores.push('La vigencia de la guia debe ser mayor a 0.');
-  }
-
-  validarRequerido(origen, 'upp_origen', 'La UPP de origen es obligatoria.', errores);
-  validarRequerido(origen, 'localidad_origen', 'La localidad de origen es obligatoria.', errores);
-  validarRequerido(origen, 'municipio_origen', 'El municipio de origen es obligatorio.', errores);
-  validarRequerido(origen, 'entidad_federativa', 'La entidad federativa de origen es obligatoria.', errores);
-
-  validarRequerido(propietario, 'nombre_propietario', 'El nombre del propietario es obligatorio.', errores);
-  validarRequerido(propietario, 'curp_propietario', 'La CURP del propietario es obligatoria.', errores);
-  validarRequerido(propietario, 'upp_propietario', 'La UPP del propietario es obligatoria.', errores);
-  if (propietario.curp_propietario && texto(propietario.curp_propietario).length !== 18) {
-    errores.push('La CURP del propietario debe tener 18 caracteres.');
-  }
-
-  validarRequerido(rastro, 'num_rastro', 'El numero de rastro es obligatorio.', errores);
-  validarRequerido(rastro, 'nombre_rastro', 'El nombre del rastro es obligatorio.', errores);
-  validarRequerido(rastro, 'nombre_destinatario', 'El destinatario del rastro es obligatorio.', errores);
-  validarRequerido(rastro, 'municipio', 'El municipio del rastro es obligatorio.', errores);
-  validarRequerido(rastro, 'entidad_federativa', 'La entidad federativa del rastro es obligatoria.', errores);
-
-  validarRequerido(animal, 'num_arete', 'El numero de arete es obligatorio.', errores);
-  validarEnum(ESPECIES, animal.especie, 'especie', errores);
-  validarEnum(SEXOS, animal.sexo, 'sexo', errores);
-  validarEnum(CLASIFICACIONES, animal.clasificacion, 'clasificacion', errores);
-  if (!Number.isInteger(Number(animal.meses_edad)) || Number(animal.meses_edad) < 0) {
-    errores.push('La edad del animal debe ser un numero entero mayor o igual a 0.');
-  }
-
-  if (!texto(lote.codigo_lote)) { lote.codigo_lote = 'AUTO';}
-  validarRequerido(lote, 'tipo_corte', 'El tipo de corte es obligatorio.', errores);
-  validarEnum(ESTADOS_LOTE, lote.estado, 'estado', errores);
-  if (!numeroPositivo(lote.peso_kg)) {
-    errores.push('El peso del lote debe ser mayor a 0.');
-  }
-  if (!fechaValida(lote.fecha_ingreso)) {
-    errores.push('La fecha de ingreso debe usar formato AAAA-MM-DD.');
-  }
-  if (!fechaValida(lote.fecha_vencimiento)) {
-    errores.push('La fecha de vencimiento debe usar formato AAAA-MM-DD.');
-  }
-  if (
-    fechaValida(lote.fecha_ingreso) &&
-    fechaValida(lote.fecha_vencimiento) &&
-    new Date(lote.fecha_vencimiento) < new Date(lote.fecha_ingreso)
-  ) {
-    errores.push('La fecha de vencimiento no puede ser anterior a la fecha de ingreso.');
-  }
-
-  return errores;
-};
-
-const normalizarDatos = (datos) => ({
-  guia_transito: {
-    folio_guia: texto(datos.guia_transito.folio_guia),
-    num_reemo: texto(datos.guia_transito.num_reemo) || null,
-    motivo_movilizacion: datos.guia_transito.motivo_movilizacion,
-    fecha_expedicion: texto(datos.guia_transito.fecha_expedicion),
-    vigencia_dias: Number(datos.guia_transito.vigencia_dias),
-    centro_expedidor: texto(datos.guia_transito.centro_expedidor),
-    elaboro: texto(datos.guia_transito.elaboro) || null,
-  },
-  origen: {
-    upp_origen: texto(datos.origen.upp_origen),
-    localidad_origen: texto(datos.origen.localidad_origen),
-    municipio_origen: texto(datos.origen.municipio_origen),
-    entidad_federativa: texto(datos.origen.entidad_federativa),
-  },
-  propietario: {
-    nombre_propietario: texto(datos.propietario.nombre_propietario),
-    curp_propietario: texto(datos.propietario.curp_propietario).toUpperCase(),
-    upp_propietario: texto(datos.propietario.upp_propietario),
-  },
-  rastro: {
-    num_rastro: texto(datos.rastro.num_rastro),
-    nombre_rastro: texto(datos.rastro.nombre_rastro),
-    nombre_destinatario: texto(datos.rastro.nombre_destinatario),
-    municipio: texto(datos.rastro.municipio),
-    entidad_federativa: texto(datos.rastro.entidad_federativa),
-  },
-  animal: {
-    num_arete: texto(datos.animal.num_arete),
-    especie: datos.animal.especie,
-    sexo: datos.animal.sexo,
-    clasificacion: datos.animal.clasificacion,
-    meses_edad: Number(datos.animal.meses_edad),
-    arete_faltante: datos.animal.arete_faltante ? 1 : 0,
-  },
-  lote: {
-    codigo_lote: texto(datos.lote.codigo_lote),
-    tipo_corte: texto(datos.lote.tipo_corte),
-    peso_kg: Number(datos.lote.peso_kg),
-    fecha_ingreso: texto(datos.lote.fecha_ingreso),
-    fecha_vencimiento: texto(datos.lote.fecha_vencimiento),
-    estado: datos.lote.estado,
-    tip_recomendacion: texto(datos.lote.tip_recomendacion) || null, 
-    id_negocio: datos.lote.id_negocio || null,
-    id_empleado: datos.lote.id_empleado || null,
-  },
-});
-
-
-const validarActualizacionLoteAnimal = (datos) => {
-  const errores = [];
-  const lote = datos.lote || {};
-  const animal = datos.animal || {};
-
-  validarRequerido(lote, 'codigo_lote', 'El codigo de lote es obligatorio.', errores);
-  validarRequerido(lote, 'tipo_corte', 'El tipo de corte es obligatorio.', errores);
-  validarEnum(ESTADOS_LOTE, lote.estado, 'estado', errores);
-
-  if (!numeroPositivo(lote.peso_kg)) {
-    errores.push('El peso del lote debe ser mayor a 0.');
-  }
-  if (!fechaValida(lote.fecha_ingreso)) {
-    errores.push('La fecha de ingreso debe usar formato AAAA-MM-DD.');
-  }
-  if (!fechaValida(lote.fecha_vencimiento)) {
-    errores.push('La fecha de vencimiento debe usar formato AAAA-MM-DD.');
-  }
-  if (
-    fechaValida(lote.fecha_ingreso) &&
-    fechaValida(lote.fecha_vencimiento) &&
-    new Date(lote.fecha_vencimiento) < new Date(lote.fecha_ingreso)
-  ) {
-    errores.push('La fecha de vencimiento no puede ser anterior a la fecha de ingreso.');
-  }
-
-  validarRequerido(animal, 'num_arete', 'El numero de arete es obligatorio.', errores);
-  validarEnum(SEXOS, animal.sexo, 'sexo', errores);
-  validarEnum(CLASIFICACIONES, animal.clasificacion, 'clasificacion', errores);
-  if (!Number.isInteger(Number(animal.meses_edad)) || Number(animal.meses_edad) < 0) {
-    errores.push('La edad del animal debe ser un numero entero mayor o igual a 0.');
-  }
-
-  return errores;
-};
-
-const normalizarActualizacionLoteAnimal = (datos) => {
-  const lote = datos.lote || {};
-  const animal = datos.animal || {};
-
   return {
+    guia_transito: {
+      folio_guia: texto(guia.folio_guia),
+      num_reemo: texto(guia.num_reemo) || null,
+      motivo_movilizacion: 'SACRIFICIO',
+      fecha_expedicion: texto(guia.fecha_expedicion) || texto(lote.fecha_ingreso),
+      vigencia_dias: Number(guia.vigencia_dias) || 3,
+      centro_expedidor: texto(guia.centro_expedidor) || 'AGL LOCAL',
+      elaboro: texto(guia.elaboro) || 'SISTEMA',
+    },
+    origen: {
+      upp_origen: texto(origen.upp_origen) || `UPP-${timestampUnico}`,
+      localidad_origen: texto(origen.localidad_origen),
+      municipio_origen: texto(origen.municipio_origen) || 'Huejutla de Reyes',
+      entidad_federativa: texto(origen.entidad_federativa) || 'Hidalgo',
+    },
+    propietario: {
+      nombre_propietario: texto(propietario.nombre_propietario),
+      curp_propietario: texto(propietario.curp_propietario).toUpperCase() || `CURP${timestampUnico}XXXXX`,
+      upp_propietario: texto(propietario.upp_propietario) || `UPP-${timestampUnico}`,
+    },
+    rastro: {
+      num_rastro: texto(rastro.num_rastro) || `RAS-${timestampUnico}`,
+      nombre_rastro: texto(rastro.nombre_rastro) || 'RASTRO MUNICIPAL',
+      nombre_destinatario: texto(rastro.nombre_destinatario) || 'CARNICERIA',
+      municipio: texto(rastro.municipio) || 'Huejutla de Reyes',
+      entidad_federativa: texto(rastro.entidad_federativa) || 'Hidalgo',
+    },
+    animal: {
+      num_arete: texto(animal.num_arete),
+      especie: animal.especie || 'BOVINO',
+      sexo: animal.sexo || 'HEMBRA',
+      clasificacion: animal.clasificacion || 'VAQUILLA',
+      meses_edad: Number(animal.meses_edad) || 12,
+      arete_faltante: animal.arete_faltante ? 1 : 0,
+    },
     lote: {
-      codigo_lote: texto(lote.codigo_lote),
+      codigo_lote: texto(lote.codigo_lote) || 'AUTO',
       tipo_corte: texto(lote.tipo_corte),
       peso_kg: Number(lote.peso_kg),
       fecha_ingreso: texto(lote.fecha_ingreso),
       fecha_vencimiento: texto(lote.fecha_vencimiento),
-      estado: texto(lote.estado).toLowerCase(),
-    },
-    animal: {
-      num_arete: texto(animal.num_arete),
-      sexo: texto(animal.sexo).toUpperCase(),
-      clasificacion: texto(animal.clasificacion).toUpperCase(),
-      meses_edad: Number(animal.meses_edad),
-      arete_faltante: animal.arete_faltante ? 1 : 0,
+      estado: lote.estado || 'activo',
+      tip_recomendacion: null,
+      id_negocio: lote.id_negocio || null,
+      id_empleado: lote.id_empleado || null,
     },
   };
 };
@@ -217,7 +131,7 @@ export const registrarNuevoLoteAnimal = async (req, res) => {
       });
     }
 
-    const resultado = await registrarLoteAnimal(normalizarDatos(req.body));
+    const resultado = await registrarLoteAnimal(normalizarDatos(req.body || {}));
 
     return res.status(201).json({
       success: true,
@@ -236,7 +150,6 @@ export const registrarNuevoLoteAnimal = async (req, res) => {
     return handleError(res, error);
   }
 };
-
 
 export const consultarLotes = async (req, res) => {
   try {
@@ -290,24 +203,15 @@ export const actualizarEstadoLote = async (req, res) => {
     const idUsuario = req.body?.id_usuario ? Number(req.body.id_usuario) : null;
 
     if (!Number.isInteger(idLote) || idLote <= 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'id_lote no es valido.',
-      });
+      return res.status(400).json({ success: false, error: 'id_lote no es valido.' });
     }
 
     if (!ESTADOS_LOTE.includes(estado)) {
-      return res.status(400).json({
-        success: false,
-        error: 'estado no es valido.',
-      });
+      return res.status(400).json({ success: false, error: 'estado no es valido.' });
     }
 
     if (req.body?.id_usuario && (!Number.isInteger(idUsuario) || idUsuario <= 0)) {
-      return res.status(400).json({
-        success: false,
-        error: 'id_usuario no es valido.',
-      });
+      return res.status(400).json({ success: false, error: 'id_usuario no es valido.' });
     }
 
     const resultado = await cambiarEstadoLote({ idLote, estado, idUsuario });
@@ -330,7 +234,6 @@ export const actualizarEstadoLote = async (req, res) => {
   }
 };
 
-
 export const editarLoteAnimal = async (req, res) => {
   try {
     const idLote = Number(req.body?.id_lote);
@@ -340,26 +243,11 @@ export const editarLoteAnimal = async (req, res) => {
       return res.status(400).json({ success: false, error: 'id_lote no es valido.' });
     }
 
-    if (req.body?.id_usuario && (!Number.isInteger(idUsuario) || idUsuario <= 0)) {
-      return res.status(400).json({ success: false, error: 'id_usuario no es valido.' });
-    }
-
-    const datosNormalizados = normalizarActualizacionLoteAnimal(req.body || {});
-    const errores = validarActualizacionLoteAnimal(datosNormalizados);
-
-    if (errores.length > 0) {
-      return res.status(400).json({
-        success: false,
-        error: 'Datos invalidos para actualizar lote/animal.',
-        details: errores,
-      });
-    }
-
     const resultado = await actualizarLoteAnimal({
       idLote,
       idUsuario,
-      lote: datosNormalizados.lote,
-      animal: datosNormalizados.animal,
+      lote: req.body?.lote,
+      animal: req.body?.animal,
     });
 
     return res.status(200).json({
@@ -407,7 +295,6 @@ export const eliminarLoteAnimal = async (req, res) => {
     return handleError(res, error);
   }
 };
-// No olvides importar la función arriba: import { registrarSalidaLote } from '../services/loteAnimalService.js';
 
 export const registrarSalida = async (req, res) => {
   try {
