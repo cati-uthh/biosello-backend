@@ -396,3 +396,316 @@ export const obtenerLotes = async ({
     connection.release();
   }
 };
+
+const obtenerLotePorId = async (connection, idLote) => {
+  const [rows] = await connection.execute(
+    `
+      SELECT
+        l.id_lote,
+        l.codigo_lote,
+        l.tipo_corte,
+        l.peso_kg,
+        l.peso_actual,
+        DATE_FORMAT(l.fecha_ingreso, '%Y-%m-%d') AS fecha_ingreso,
+        DATE_FORMAT(l.fecha_vencimiento, '%Y-%m-%d') AS fecha_vencimiento,
+        l.estado,
+        l.tip_recomendacion,
+        l.id_negocio,
+        l.id_empleado,
+        a.id_animal,
+        a.num_arete,
+        a.especie,
+        a.sexo,
+        a.clasificacion,
+        a.meses_edad,
+        a.arete_faltante,
+        CASE
+          WHEN a.especie = 'BOVINO' THEN 'Res'
+          WHEN a.especie = 'PORCINO' THEN 'Cerdo'
+          ELSE a.especie
+        END AS especie_nombre,
+        (
+          SELECT gt.folio_guia
+          FROM guia_animal ga
+          INNER JOIN guia_transito gt ON gt.id_guia = ga.id_guia
+          WHERE ga.id_animal = a.id_animal
+          ORDER BY gt.created_at DESC, gt.id_guia DESC
+          LIMIT 1
+        ) AS folio_guia
+      FROM lote l
+      LEFT JOIN animal a ON a.id_animal = l.id_animal
+      WHERE l.id_lote = ?
+      LIMIT 1
+    `,
+    [idLote]
+  );
+
+  return rows[0] || null;
+};
+
+export const cambiarEstadoLote = async ({ idLote, estado, idUsuario = null }) => {
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [lotes] = await connection.execute(
+      `
+        SELECT id_lote, estado
+        FROM lote
+        WHERE id_lote = ?
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [idLote]
+    );
+
+    if (lotes.length === 0) {
+      throw crearError('El lote indicado no existe.', 404, 'LOTE_NOT_FOUND');
+    }
+
+    const estadoAnterior = lotes[0].estado;
+
+    if (estadoAnterior === 'caducado' && estado !== 'caducado') {
+      throw crearError(
+        'Por seguridad sanitaria, un lote caducado ha sido bloqueado permanentemente y no puede volver a activarse.',
+        403,
+        'LOTE_BLOQUEADO'
+      );
+    }
+
+    if (estadoAnterior === estado) {
+      await connection.commit();
+      return {
+        id_lote: idLote,
+        estado_anterior: estadoAnterior,
+        estado_nuevo: estado,
+      };
+    }
+
+    await connection.execute(
+      'UPDATE lote SET estado = ? WHERE id_lote = ?',
+      [estado, idLote]
+    );
+
+    await connection.execute(
+      `
+        INSERT INTO historial_estado (id_lote, estado_anterior, estado_nuevo, cambiado_por)
+        VALUES (?, ?, ?, ?)
+      `,
+      [idLote, estadoAnterior, estado, idUsuario]
+    );
+
+    await connection.commit();
+
+    return {
+      id_lote: idLote,
+      estado_anterior: estadoAnterior,
+      estado_nuevo: estado,
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
+export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = null }) => {
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [actualRows] = await connection.execute(
+      'SELECT id_lote, codigo_lote, estado, id_animal FROM lote WHERE id_lote = ? LIMIT 1 FOR UPDATE',
+      [idLote]
+    );
+
+    if (actualRows.length === 0) {
+      throw crearError('El lote indicado no existe.', 404, 'LOTE_NOT_FOUND');
+    }
+
+    if (!lote) {
+      throw crearError('Los datos del lote son obligatorios.', 400, 'LOTE_DATA_REQUIRED');
+    }
+
+    const actual = actualRows[0];
+
+    const [loteDuplicado] = await connection.execute(
+      'SELECT id_lote FROM lote WHERE codigo_lote = ? AND id_lote <> ? LIMIT 1',
+      [lote.codigo_lote, idLote]
+    );
+
+    if (loteDuplicado.length > 0) {
+      throw crearError('El código de lote ya se encuentra registrado.', 409, 'LOTE_DUPLICADO');
+    }
+
+    await connection.execute(
+      `
+        UPDATE lote
+        SET codigo_lote = ?,
+            tipo_corte = ?,
+            peso_kg = ?,
+            fecha_ingreso = ?,
+            fecha_vencimiento = ?,
+            estado = ?
+        WHERE id_lote = ?
+      `,
+      [
+        lote.codigo_lote,
+        lote.tipo_corte,
+        lote.peso_kg,
+        lote.fecha_ingreso,
+        lote.fecha_vencimiento,
+        lote.estado,
+        idLote,
+      ]
+    );
+
+    if (actual.id_animal && animal) {
+      const [animalDuplicado] = await connection.execute(
+        'SELECT id_animal FROM animal WHERE num_arete = ? AND id_animal <> ? LIMIT 1',
+        [animal.num_arete, actual.id_animal]
+      );
+
+      if (animalDuplicado.length > 0) {
+        throw crearError('El número de arete ya se encuentra registrado.', 409, 'ANIMAL_DUPLICADO');
+      }
+
+      await connection.execute(
+        `
+          UPDATE animal
+          SET num_arete = ?,
+              sexo = ?,
+              clasificacion = ?,
+              meses_edad = ?,
+              arete_faltante = ?
+          WHERE id_animal = ?
+        `,
+        [
+          animal.num_arete,
+          animal.sexo,
+          animal.clasificacion,
+          animal.meses_edad,
+          animal.arete_faltante ? 1 : 0,
+          actual.id_animal,
+        ]
+      );
+    }
+
+    if (actual.estado !== lote.estado) {
+      if (actual.estado === 'caducado' && lote.estado !== 'caducado') {
+        throw crearError(
+          'Por seguridad sanitaria, un lote caducado ha sido bloqueado permanentemente y no puede volver a activarse.',
+          403,
+          'LOTE_BLOQUEADO'
+        );
+      }
+
+      await connection.execute(
+        `
+          INSERT INTO historial_estado (id_lote, estado_anterior, estado_nuevo, cambiado_por)
+          VALUES (?, ?, ?, ?)
+        `,
+        [idLote, actual.estado, lote.estado, idUsuario]
+      );
+    }
+
+    const actualizado = await obtenerLotePorId(connection, idLote);
+    await connection.commit();
+
+    return actualizado;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
+export const eliminarLote = async ({ idLote }) => {
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [existente] = await connection.execute(
+      'SELECT id_lote FROM lote WHERE id_lote = ? LIMIT 1',
+      [idLote]
+    );
+
+    if (existente.length === 0) {
+      throw crearError('El lote indicado no existe.', 404, 'LOTE_NOT_FOUND');
+    }
+
+    await connection.execute('DELETE FROM lote WHERE id_lote = ?', [idLote]);
+    await connection.commit();
+
+    return { id_lote: idLote };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
+
+export const registrarSalidaLote = async ({ idLote, pesoSalida }) => {
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [lotes] = await connection.execute(
+      'SELECT peso_actual, estado FROM lote WHERE id_lote = ? FOR UPDATE',
+      [idLote]
+    );
+
+    if (lotes.length === 0) {
+      throw crearError('El lote indicado no existe.', 404, 'LOTE_NOT_FOUND');
+    }
+
+    const lote = lotes[0];
+    const pesoActual = Number(lote.peso_actual);
+
+    if (!Number.isFinite(pesoActual)) {
+      throw crearError('El lote no tiene un peso actual válido.', 409, 'PESO_ACTUAL_INVALIDO');
+    }
+
+    if (pesoActual < pesoSalida) {
+      throw crearError(
+        `Stock insuficiente. Solo quedan ${lote.peso_actual} kg.`,
+        400,
+        'STOCK_INSUFICIENTE'
+      );
+    }
+
+    await connection.execute(
+      'INSERT INTO salida_lote (id_lote, peso_salida) VALUES (?, ?)',
+      [idLote, pesoSalida]
+    );
+
+    const nuevoPeso = pesoActual - pesoSalida;
+    const nuevoEstado = nuevoPeso <= 0 ? 'vendido' : lote.estado;
+
+    await connection.execute(
+      'UPDATE lote SET peso_actual = ?, estado = ? WHERE id_lote = ?',
+      [nuevoPeso, nuevoEstado, idLote]
+    );
+
+    await connection.commit();
+
+    return {
+      id_lote: idLote,
+      peso_descontado: pesoSalida,
+      peso_restante: nuevoPeso,
+      estado: nuevoEstado,
+    };
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
+};
