@@ -1,6 +1,11 @@
 import pool from '../src/config/db';
 import bcrypt from 'bcryptjs';
-import { crearTokenSesion, normalizarPerfilAcceso } from '../src/config/utils/auth.js';
+
+const normalizarPerfilAcceso = (perfil) => String(perfil || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .toLowerCase();
 
 export default async function handler(req, res) {
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -75,15 +80,9 @@ export default async function handler(req, res) {
             return res.status(401).json({ success: false, error: 'La contraseña es incorrecta.' });
         }
 
-        const token = crearTokenSesion({
-            idUsuario: usuario.id_usuario,
-            perfil: usuario.perfil
-        });
-
         return res.status(200).json({
             success: true,
             mensaje: 'Inicio de sesión exitoso.',
-            token,
             usuario: {
                 id: usuario.id_usuario,
                 id_usuario: usuario.id_usuario,
