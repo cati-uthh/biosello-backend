@@ -81,16 +81,20 @@ const obtenerIdAnimal = async (connection, animal, idOrigen, idPropietario) => e
       clasificacion,
       meses_edad,
       arete_faltante,
+      imagen_animal_url,
+      imagen_animal_pathname,
       id_origen,
       id_propietario
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON DUPLICATE KEY UPDATE
       especie = VALUES(especie),
       sexo = VALUES(sexo),
       clasificacion = VALUES(clasificacion),
       meses_edad = VALUES(meses_edad),
       arete_faltante = VALUES(arete_faltante),
+      imagen_animal_url = COALESCE(VALUES(imagen_animal_url), imagen_animal_url),
+      imagen_animal_pathname = COALESCE(VALUES(imagen_animal_pathname), imagen_animal_pathname),
       id_origen = VALUES(id_origen),
       id_propietario = VALUES(id_propietario),
       id_animal = LAST_INSERT_ID(id_animal)
@@ -102,6 +106,8 @@ const obtenerIdAnimal = async (connection, animal, idOrigen, idPropietario) => e
     animal.clasificacion,
     animal.meses_edad,
     animal.arete_faltante,
+    animal.imagen_animal_url,
+    animal.imagen_animal_pathname,
     idOrigen,
     idPropietario,
   ]
@@ -146,16 +152,31 @@ const obtenerIdGuia = async (connection, guia, idPropietario, idRastro) => ejecu
   ]
 );
 
-const validarRelacionNegocio = async (connection, idNegocio) => {
-  if (!idNegocio) return null;
+const validarRelacionNegocio = async (connection, idNegocio, idEmpleado) => {
+  if (!idNegocio || !idEmpleado) {
+    throw crearError('La sesion no tiene un negocio asociado.', 403, 'NEGOCIO_REQUIRED');
+  }
 
   const [rows] = await connection.execute(
-    'SELECT id_negocio FROM negocio WHERE id_negocio = ? LIMIT 1',
-    [idNegocio]
+    `
+      SELECT n.id_negocio
+      FROM negocio n
+      INNER JOIN usuario u
+        ON u.id_usuario = ?
+       AND u.activo = 1
+      LEFT JOIN empleado_negocio en
+        ON en.id_usuario = u.id_usuario
+       AND en.id_negocio = n.id_negocio
+       AND en.activo = 1
+      WHERE n.id_negocio = ?
+        AND (n.id_admin = u.id_usuario OR en.id_usuario IS NOT NULL)
+      LIMIT 1
+    `,
+    [idEmpleado, idNegocio]
   );
 
   if (rows.length === 0) {
-    throw crearError('El negocio indicado no existe.', 400, 'NEGOCIO_NOT_FOUND');
+    throw crearError('No tienes permiso para registrar lotes en este negocio.', 403, 'NEGOCIO_FORBIDDEN');
   }
 
   return idNegocio;
@@ -222,8 +243,8 @@ const insertarLote = async (connection, lote, idAnimal) => {
     }
   }
 
-  const idNegocio = await validarRelacionNegocio(connection, lote.id_negocio);
   const idEmpleado = await validarRelacionEmpleado(connection, lote.id_empleado);
+  const idNegocio = await validarRelacionNegocio(connection, lote.id_negocio, idEmpleado);
 
   const [result] = await connection.execute(
     `
@@ -370,6 +391,8 @@ export const obtenerLotes = async ({
           a.clasificacion,
           a.meses_edad,
           a.arete_faltante,
+          a.imagen_animal_url,
+          a.imagen_animal_pathname,
           CASE
             WHEN a.especie = 'BOVINO' THEN 'Res'
             WHEN a.especie = 'PORCINO' THEN 'Cerdo'
@@ -419,6 +442,8 @@ const obtenerLotePorId = async (connection, idLote) => {
         a.clasificacion,
         a.meses_edad,
         a.arete_faltante,
+        a.imagen_animal_url,
+        a.imagen_animal_pathname,
         CASE
           WHEN a.especie = 'BOVINO' THEN 'Res'
           WHEN a.especie = 'PORCINO' THEN 'Cerdo'

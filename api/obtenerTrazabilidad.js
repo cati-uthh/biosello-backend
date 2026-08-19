@@ -29,7 +29,7 @@ export default async function handler(req, res) {
             SELECT 
                 l.codigo_lote, l.tipo_corte, l.peso_kg, l.fecha_ingreso, l.fecha_vencimiento, l.estado,
                 n.nombre_negocio, n.municipio AS municipio_negocio,
-                a.num_arete, a.especie, a.clasificacion,
+                a.num_arete, a.especie, a.clasificacion, a.imagen_animal_url,
                 o.upp_origen, o.localidad_origen, o.municipio_origen,
                 p.nombre_propietario,
                 g.folio_guia, g.num_reemo,
@@ -64,6 +64,7 @@ export default async function handler(req, res) {
                 establecimiento: trazabilidad.nombre_negocio,
                 arete_siniga: trazabilidad.num_arete,
                 especie: trazabilidad.especie,
+                imagen_animal_url: trazabilidad.imagen_animal_url,
                 procedencia: `${trazabilidad.localidad_origen}, ${trazabilidad.municipio_origen}`,
                 upp_rancho: trazabilidad.upp_origen,
                 productor: trazabilidad.nombre_propietario,

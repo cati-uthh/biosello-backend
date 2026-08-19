@@ -1,4 +1,5 @@
 import { actualizarLoteAnimal, cambiarEstadoLote, eliminarLote, obtenerLotes, registrarLoteAnimal, registrarSalidaLote } from '../services/loteAnimalService.js';
+import { obtenerSesionRequest } from '../utils/auth.js';
 import { handleError } from '../utils/errorHandler.js';
 
 const ESPECIES = ['BOVINO', 'PORCINO', 'OVINO', 'CAPRINO', 'EQUINO'];
@@ -26,8 +27,41 @@ const validarRequerido = (objeto, campo, mensaje, errores) => {
   }
 };
 
+const validarImagenAnimal = (animal, idUsuario, errores) => {
+  const imagenUrl = texto(animal?.imagen_animal_url);
+  const imagenPathname = texto(animal?.imagen_animal_pathname).replace(/^\/+/, '');
+
+  if (!imagenUrl && !imagenPathname) return;
+  if (!imagenUrl || !imagenPathname) {
+    errores.push('La URL y la ruta de la fotografia deben enviarse juntas.');
+    return;
+  }
+  if (imagenUrl.length > 2048 || imagenPathname.length > 1024) {
+    errores.push('La referencia de la fotografia es demasiado larga.');
+    return;
+  }
+  if (!imagenPathname.startsWith(`animales/${idUsuario}/`)) {
+    errores.push('La fotografia no pertenece a la sesion actual.');
+    return;
+  }
+
+  try {
+    const url = new URL(imagenUrl);
+    const pathnameUrl = decodeURIComponent(url.pathname).replace(/^\/+/, '');
+    if (
+      url.protocol !== 'https:'
+      || !url.hostname.endsWith('.public.blob.vercel-storage.com')
+      || pathnameUrl !== imagenPathname
+    ) {
+      errores.push('La fotografia no corresponde al almacenamiento publico configurado.');
+    }
+  } catch (error) {
+    errores.push('La URL de la fotografia no es valida.');
+  }
+};
+
 // Validación ajustada: solo exige lo indispensable para la base de datos y la RA
-const validarDatos = (datos) => {
+const validarDatos = (datos, idUsuario) => {
   const errores = [];
   const guia = datos.guia_transito || {};
   const origen = datos.origen || {};
@@ -42,6 +76,7 @@ const validarDatos = (datos) => {
   validarEnum(ESPECIES, animal.especie, 'especie', errores);
   validarEnum(SEXOS, animal.sexo, 'sexo', errores);
   validarEnum(CLASIFICACIONES, animal.clasificacion, 'clasificacion', errores);
+  validarImagenAnimal(animal, idUsuario, errores);
 
   validarRequerido(lote, 'tipo_corte', 'El tipo de corte es obligatorio.', errores);
   validarEnum(ESTADOS_LOTE, lote.estado, 'estado', errores);
@@ -104,6 +139,8 @@ const normalizarDatos = (datos) => {
       clasificacion: animal.clasificacion || 'VAQUILLA',
       meses_edad: Number(animal.meses_edad) || 12,
       arete_faltante: animal.arete_faltante ? 1 : 0,
+      imagen_animal_url: texto(animal.imagen_animal_url) || null,
+      imagen_animal_pathname: texto(animal.imagen_animal_pathname).replace(/^\/+/, '') || null,
     },
     lote: {
       codigo_lote: texto(lote.codigo_lote) || 'AUTO',
@@ -121,7 +158,15 @@ const normalizarDatos = (datos) => {
 
 export const registrarNuevoLoteAnimal = async (req, res) => {
   try {
-    const errores = validarDatos(req.body || {});
+    const sesion = obtenerSesionRequest(req);
+    const datosSolicitud = {
+      ...(req.body || {}),
+      lote: {
+        ...(req.body?.lote || {}),
+        id_empleado: sesion.idUsuario,
+      },
+    };
+    const errores = validarDatos(datosSolicitud, sesion.idUsuario);
 
     if (errores.length > 0) {
       return res.status(400).json({
@@ -131,7 +176,7 @@ export const registrarNuevoLoteAnimal = async (req, res) => {
       });
     }
 
-    const resultado = await registrarLoteAnimal(normalizarDatos(req.body || {}));
+    const resultado = await registrarLoteAnimal(normalizarDatos(datosSolicitud));
 
     return res.status(201).json({
       success: true,
