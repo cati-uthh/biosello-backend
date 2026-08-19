@@ -1,8 +1,8 @@
 import pool from '../src/config/db';
 import bcrypt from 'bcryptjs';
+import { crearTokenSesion, normalizarPerfilAcceso } from '../src/config/utils/auth.js';
 
 export default async function handler(req, res) {
-    res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
     res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
@@ -37,12 +37,16 @@ export default async function handler(req, res) {
                 u.contrasena_hash,
                 u.perfil,
                 u.activo,
-                n.id_negocio,
-                n.nombre_negocio,
-                n.estatus_verificacion
+                COALESCE(negocio_admin.id_negocio, negocio_empleado.id_negocio) AS id_negocio,
+                COALESCE(negocio_admin.nombre_negocio, negocio_empleado.nombre_negocio) AS nombre_negocio,
+                COALESCE(negocio_admin.estatus_verificacion, negocio_empleado.estatus_verificacion) AS estatus_verificacion,
+                en.puesto
             FROM usuario u
-            LEFT JOIN negocio n ON u.id_usuario = n.id_admin
+            LEFT JOIN negocio negocio_admin ON u.id_usuario = negocio_admin.id_admin
+            LEFT JOIN empleado_negocio en ON u.id_usuario = en.id_usuario AND en.activo = 1
+            LEFT JOIN negocio negocio_empleado ON en.id_negocio = negocio_empleado.id_negocio
             WHERE u.email = ? OR u.telefono = ?
+            ORDER BY negocio_admin.id_negocio_padre IS NULL DESC, negocio_admin.id_negocio ASC
             LIMIT 1
         `;
 
@@ -58,15 +62,28 @@ export default async function handler(req, res) {
             return res.status(403).json({ success: false, error: 'Esta cuenta fue desactivada por el administrador.' });
         }
 
+        if (normalizarPerfilAcceso(usuario.perfil) === 'empleado' && !usuario.id_negocio) {
+            return res.status(403).json({
+                success: false,
+                error: 'Esta cuenta de empleado ya no está asociada a una sucursal activa.'
+            });
+        }
+
         const contrasenaValida = await bcrypt.compare(contrasena, usuario.contrasena_hash);
 
         if (!contrasenaValida) {
             return res.status(401).json({ success: false, error: 'La contraseña es incorrecta.' });
         }
 
+        const token = crearTokenSesion({
+            idUsuario: usuario.id_usuario,
+            perfil: usuario.perfil
+        });
+
         return res.status(200).json({
             success: true,
             mensaje: 'Inicio de sesión exitoso.',
+            token,
             usuario: {
                 id: usuario.id_usuario,
                 id_usuario: usuario.id_usuario,
@@ -74,6 +91,7 @@ export default async function handler(req, res) {
                 email: usuario.email,
                 telefono: usuario.telefono,
                 perfil: usuario.perfil,
+                puesto: usuario.puesto,
                 id_negocio: usuario.id_negocio,
                 nombre_negocio: usuario.nombre_negocio,
                 estatus_negocio: usuario.estatus_verificacion
