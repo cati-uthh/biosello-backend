@@ -40,7 +40,11 @@ const validarImagenAnimal = (animal, idUsuario, errores) => {
     errores.push('La referencia de la fotografia es demasiado larga.');
     return;
   }
-  if (!imagenPathname.startsWith(`animales/${idUsuario}/`)) {
+  const prefijosPermitidos = [
+    `imagenes/animales/${idUsuario}/`,
+    `animales/${idUsuario}/`,
+  ];
+  if (!prefijosPermitidos.some((prefijo) => imagenPathname.startsWith(prefijo))) {
     errores.push('La fotografia no pertenece a la sesion actual.');
     return;
   }

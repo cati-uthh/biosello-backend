@@ -5,6 +5,7 @@ import { obtenerSesionRequest } from '../src/config/utils/auth.js';
 const MAXIMO_BYTES = 3 * 1024 * 1024;
 const MAXIMO_BASE64 = Math.ceil(MAXIMO_BYTES * 4 / 3) + 8;
 const TIPOS_PERMITIDOS = new Set(['image/jpeg', 'image/png', 'image/webp']);
+const CARPETA_IMAGENES_ANIMALES = 'imagenes/animales';
 
 const responderError = (res, error) => {
   const statusCode = error?.statusCode || 400;
@@ -85,7 +86,11 @@ const decodificarImagen = ({ archivoBase64, mimeType, tamanioBytes }) => {
 
 const rutaPermitida = (pathname, idUsuario) => {
   const ruta = String(pathname || '').replace(/^\/+/, '');
-  return ruta.startsWith(`animales/${idUsuario}/`) ? ruta : null;
+  const prefijosPermitidos = [
+    `${CARPETA_IMAGENES_ANIMALES}/${idUsuario}/`,
+    `animales/${idUsuario}/`,
+  ];
+  return prefijosPermitidos.some((prefijo) => ruta.startsWith(prefijo)) ? ruta : null;
 };
 
 const urlBlobPublicaValida = (valor, pathname) => {
@@ -116,7 +121,7 @@ export default async function handler(req, res) {
       const sesion = obtenerSesionRequest(req);
       const { buffer, mimeType } = decodificarImagen(req.body || {});
       const archivo = nombreSeguro(req.body?.nombre, mimeType);
-      const blob = await put(`animales/${sesion.idUsuario}/${Date.now()}-${archivo}`, buffer, {
+      const blob = await put(`${CARPETA_IMAGENES_ANIMALES}/${sesion.idUsuario}/${Date.now()}-${archivo}`, buffer, {
         access: 'public',
         addRandomSuffix: true,
         contentType: mimeType,
