@@ -2,10 +2,9 @@ import { registrarNuevoNegocio } from '../src/config/controllers/negocioControll
 
 export default async function handler(req, res) {
   // Aseguramos cabeceras CORS básicas (útil si luego hacen un dashboard web)
-  res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 
   // Respuesta rápida para pre-flight requests (CORS)
   if (req.method === 'OPTIONS') {
@@ -24,7 +23,7 @@ export default async function handler(req, res) {
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '10mb', // Aumentamos el límite para permitir PDFs o fotos
+      sizeLimit: '7mb',
     },
   },
 };

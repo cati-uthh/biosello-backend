@@ -83,11 +83,14 @@ export const obtenerSesionRequest = (req) => {
   return verificarToken(coincidencia[1].trim());
 };
 
-export const obtenerAdministradorRequest = (req) => {
+export const obtenerAdministradorRequest = (
+  req,
+  mensaje = 'Solo una cuenta administradora puede gestionar empleados.'
+) => {
   const sesion = obtenerSesionRequest(req);
   if (sesion.perfil !== 'admin') {
     throw crearErrorAuth(
-      'Solo una cuenta administradora puede gestionar empleados.',
+      mensaje,
       403,
       'ADMIN_REQUIRED'
     );

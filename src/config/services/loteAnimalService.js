@@ -1,4 +1,9 @@
 import pool from '../db';
+import {
+  agregarFiltroAccesoLotes,
+  validarAccesoLote,
+  validarAccesoNegocio,
+} from './autorizacionService.js';
 
 const crearError = (message, statusCode = 400, code = 'VALIDATION_ERROR') => {
   const error = new Error(message);
@@ -326,7 +331,7 @@ export const registrarLoteAnimal = async (datos) => {
 
 export const obtenerLotes = async ({
   idNegocio = null,
-  idEmpleado = null,
+  sesion,
   especie = null,
   estado = null,
   fechaIngreso = null,
@@ -334,23 +339,28 @@ export const obtenerLotes = async ({
   const connection = await pool.getConnection();
 
   try {
-    await connection.execute(`
-      UPDATE lote 
-      SET estado = 'caducado' 
-      WHERE estado = 'activo' AND fecha_vencimiento < CURDATE()
-    `);
+    if (idNegocio) {
+      await validarAccesoNegocio(connection, { idNegocio, sesion });
+    }
 
     const filtros = [];
     const params = [];
+    agregarFiltroAccesoLotes({ filtros, params, sesion });
+
+    await connection.execute(
+      `
+        UPDATE lote l
+        SET estado = 'caducado'
+        WHERE l.estado = 'activo'
+          AND l.fecha_vencimiento < CURDATE()
+          AND ${filtros[0]}
+      `,
+      params
+    );
 
     if (idNegocio) {
       filtros.push('l.id_negocio = ?');
       params.push(idNegocio);
-    }
-
-    if (!idNegocio && idEmpleado) {
-      filtros.push('l.id_empleado = ?');
-      params.push(idEmpleado);
     }
 
     if (especie) {
@@ -468,11 +478,12 @@ const obtenerLotePorId = async (connection, idLote) => {
   return rows[0] || null;
 };
 
-export const cambiarEstadoLote = async ({ idLote, estado, idUsuario = null }) => {
+export const cambiarEstadoLote = async ({ idLote, estado, sesion }) => {
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
+    await validarAccesoLote(connection, { idLote, sesion, bloquear: true });
 
     const [lotes] = await connection.execute(
       `
@@ -518,7 +529,7 @@ export const cambiarEstadoLote = async ({ idLote, estado, idUsuario = null }) =>
         INSERT INTO historial_estado (id_lote, estado_anterior, estado_nuevo, cambiado_por)
         VALUES (?, ?, ?, ?)
       `,
-      [idLote, estadoAnterior, estado, idUsuario]
+      [idLote, estadoAnterior, estado, sesion.idUsuario]
     );
 
     await connection.commit();
@@ -536,14 +547,15 @@ export const cambiarEstadoLote = async ({ idLote, estado, idUsuario = null }) =>
   }
 };
 
-export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = null }) => {
+export const actualizarLoteAnimal = async ({ idLote, lote, animal, sesion }) => {
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
+    await validarAccesoLote(connection, { idLote, sesion, bloquear: true });
 
     const [actualRows] = await connection.execute(
-      'SELECT id_lote, codigo_lote, estado, id_animal FROM lote WHERE id_lote = ? LIMIT 1 FOR UPDATE',
+      'SELECT id_lote, codigo_lote, estado, id_animal, peso_kg, peso_actual FROM lote WHERE id_lote = ? LIMIT 1 FOR UPDATE',
       [idLote]
     );
 
@@ -556,6 +568,27 @@ export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = n
     }
 
     const actual = actualRows[0];
+    const estadoSolicitado = String(lote.estado || '').trim().toLowerCase();
+    const pesoTotalAnterior = Number(actual.peso_kg);
+    const pesoDisponibleAnterior = Number(actual.peso_actual);
+    const nuevoPesoTotal = Number(lote.peso_kg);
+    const pesoYaVendido = Math.max(0, pesoTotalAnterior - pesoDisponibleAnterior);
+
+    if (!Number.isFinite(pesoTotalAnterior) || !Number.isFinite(pesoDisponibleAnterior)) {
+      throw crearError('El inventario actual del lote no es valido.', 409, 'INVENTARIO_INVALIDO');
+    }
+    if (nuevoPesoTotal + 1e-9 < pesoYaVendido) {
+      throw crearError(
+        `El peso total no puede ser menor a los ${pesoYaVendido} kg que ya salieron del inventario.`,
+        400,
+        'PESO_MENOR_A_SALIDAS'
+      );
+    }
+
+    const nuevoPesoDisponible = Math.max(0, Number((nuevoPesoTotal - pesoYaVendido).toFixed(3)));
+    const estadoFinal = nuevoPesoDisponible <= 0 && estadoSolicitado !== 'caducado'
+      ? 'vendido'
+      : estadoSolicitado;
 
     const [loteDuplicado] = await connection.execute(
       'SELECT id_lote FROM lote WHERE codigo_lote = ? AND id_lote <> ? LIMIT 1',
@@ -572,6 +605,7 @@ export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = n
         SET codigo_lote = ?,
             tipo_corte = ?,
             peso_kg = ?,
+            peso_actual = ?,
             fecha_ingreso = ?,
             fecha_vencimiento = ?,
             estado = ?
@@ -580,10 +614,11 @@ export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = n
       [
         lote.codigo_lote,
         lote.tipo_corte,
-        lote.peso_kg,
+        nuevoPesoTotal,
+        nuevoPesoDisponible,
         lote.fecha_ingreso,
         lote.fecha_vencimiento,
-        lote.estado,
+        estadoFinal,
         idLote,
       ]
     );
@@ -619,8 +654,8 @@ export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = n
       );
     }
 
-    if (actual.estado !== lote.estado) {
-      if (actual.estado === 'caducado' && lote.estado !== 'caducado') {
+    if (actual.estado !== estadoFinal) {
+      if (actual.estado === 'caducado' && estadoFinal !== 'caducado') {
         throw crearError(
           'Por seguridad sanitaria, un lote caducado ha sido bloqueado permanentemente y no puede volver a activarse.',
           403,
@@ -633,7 +668,7 @@ export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = n
           INSERT INTO historial_estado (id_lote, estado_anterior, estado_nuevo, cambiado_por)
           VALUES (?, ?, ?, ?)
         `,
-        [idLote, actual.estado, lote.estado, idUsuario]
+        [idLote, actual.estado, estadoFinal, sesion.idUsuario]
       );
     }
 
@@ -649,11 +684,12 @@ export const actualizarLoteAnimal = async ({ idLote, lote, animal, idUsuario = n
   }
 };
 
-export const eliminarLote = async ({ idLote }) => {
+export const eliminarLote = async ({ idLote, sesion }) => {
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
+    await validarAccesoLote(connection, { idLote, sesion, bloquear: true });
 
     const [existente] = await connection.execute(
       'SELECT id_lote FROM lote WHERE id_lote = ? LIMIT 1',
@@ -676,14 +712,33 @@ export const eliminarLote = async ({ idLote }) => {
   }
 };
 
-export const registrarSalidaLote = async ({ idLote, pesoSalida }) => {
+export const registrarSalidaLote = async ({
+  idLote,
+  pesoSalida,
+  idCorte = null,
+  tipoCorte = null,
+  tipRecomendacion = null,
+  sesion,
+}) => {
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
+    await validarAccesoLote(connection, { idLote, sesion, bloquear: true });
 
     const [lotes] = await connection.execute(
-      'SELECT peso_actual, estado FROM lote WHERE id_lote = ? FOR UPDATE',
+      `
+        SELECT
+          l.peso_actual,
+          l.estado,
+          l.tipo_corte,
+          l.fecha_vencimiento < CURDATE() AS vencido,
+          a.especie
+        FROM lote l
+        LEFT JOIN animal a ON a.id_animal = l.id_animal
+        WHERE l.id_lote = ?
+        LIMIT 1
+      `,
       [idLote]
     );
 
@@ -693,6 +748,85 @@ export const registrarSalidaLote = async ({ idLote, pesoSalida }) => {
 
     const lote = lotes[0];
     const pesoActual = Number(lote.peso_actual);
+    let tipoCorteFinal = lote.tipo_corte;
+    let tipRecomendacionFinal = null;
+
+    if (lote.estado !== 'activo') {
+      throw crearError(
+        'Solo se pueden registrar salidas de lotes activos.',
+        409,
+        'LOTE_NO_DISPONIBLE'
+      );
+    }
+    if (Number(lote.vencido) === 1) {
+      throw crearError(
+        'No se pueden registrar salidas de un lote vencido.',
+        409,
+        'LOTE_CADUCADO'
+      );
+    }
+
+    if (idCorte !== null) {
+      const [cortes] = await connection.execute(
+        `
+          SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion
+          FROM catalogo_corte
+          WHERE id_corte = ?
+          LIMIT 1
+        `,
+        [idCorte]
+      );
+
+      if (cortes.length === 0) {
+        throw crearError('El corte seleccionado no existe.', 404, 'CORTE_NOT_FOUND');
+      }
+
+      const corte = cortes[0];
+      if (String(corte.especie || '').toUpperCase() !== String(lote.especie || '').toUpperCase()) {
+        throw crearError(
+          'El corte seleccionado no corresponde a la especie del lote.',
+          400,
+          'CORTE_ESPECIE_INVALIDA'
+        );
+      }
+
+      tipoCorteFinal = String(corte.nombre_corte || '').trim();
+      if (tipoCorte && tipoCorte.toLocaleLowerCase('es-MX') !== tipoCorteFinal.toLocaleLowerCase('es-MX')) {
+        throw crearError(
+          'El nombre del corte no coincide con el catálogo.',
+          400,
+          'CORTE_CATALOGO_INVALIDO'
+        );
+      }
+
+      const tipCuidado = String(corte.tip_cuidado || '').trim();
+      const recomendacion = String(corte.recomendacion || '').trim();
+      const opcionesPermitidas = new Map();
+
+      if (tipCuidado) {
+        const opcion = `Tip: ${tipCuidado}`;
+        opcionesPermitidas.set(opcion, opcion);
+      }
+      if (recomendacion) {
+        const opcion = `Recomendación: ${recomendacion}`;
+        opcionesPermitidas.set(opcion, opcion);
+      }
+      if (tipCuidado && recomendacion) {
+        const opcion = `Tip: ${tipCuidado} | Recomendación: ${recomendacion}`;
+        opcionesPermitidas.set(opcion, opcion);
+      }
+
+      if (tipRecomendacion && !opcionesPermitidas.has(tipRecomendacion)) {
+        throw crearError(
+          'La recomendación enviada no corresponde al catálogo seleccionado.',
+          400,
+          'RECOMENDACION_CATALOGO_INVALIDA'
+        );
+      }
+      tipRecomendacionFinal = tipRecomendacion
+        ? opcionesPermitidas.get(tipRecomendacion)
+        : null;
+    }
 
     if (!Number.isFinite(pesoActual)) {
       throw crearError('El lote no tiene un peso actual válido.', 409, 'PESO_ACTUAL_INVALIDO');
@@ -715,7 +849,12 @@ export const registrarSalidaLote = async ({ idLote, pesoSalida }) => {
     const nuevoEstado = nuevoPeso <= 0 ? 'vendido' : lote.estado;
 
     await connection.execute(
-      'UPDATE lote SET peso_actual = ?, estado = ? WHERE id_lote = ?',
+      `
+        UPDATE lote
+        SET peso_actual = ?,
+            estado = ?
+        WHERE id_lote = ?
+      `,
       [nuevoPeso, nuevoEstado, idLote]
     );
 
@@ -726,6 +865,8 @@ export const registrarSalidaLote = async ({ idLote, pesoSalida }) => {
       peso_descontado: pesoSalida,
       peso_restante: nuevoPeso,
       estado: nuevoEstado,
+      tipo_corte: tipoCorteFinal,
+      tip_recomendacion: tipRecomendacionFinal,
     };
   } catch (error) {
     await connection.rollback();

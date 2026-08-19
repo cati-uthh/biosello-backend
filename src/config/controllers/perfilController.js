@@ -1,4 +1,5 @@
 import { actualizarPerfil, obtenerPerfil } from '../services/perfilService.js';
+import { obtenerSesionRequest } from '../utils/auth.js';
 import { handleError } from '../utils/errorHandler.js';
 
 const texto = (valor) => String(valor ?? '').trim();
@@ -7,13 +8,9 @@ const rfcRegex = /^[A-Z&Ñ]{3,4}[0-9]{6}[A-Z0-9]{3}$/i;
 
 export const consultarPerfil = async (req, res) => {
   try {
-    const idUsuario = Number(req.query?.id_usuario);
+    const sesion = obtenerSesionRequest(req);
 
-    if (!Number.isInteger(idUsuario) || idUsuario <= 0) {
-      return res.status(400).json({ success: false, error: 'id_usuario no es válido.' });
-    }
-
-    const perfil = await obtenerPerfil(idUsuario);
+    const perfil = await obtenerPerfil(sesion.idUsuario);
     return res.status(200).json({ success: true, data: perfil });
   } catch (error) {
     if (error.statusCode) {
@@ -26,7 +23,7 @@ export const consultarPerfil = async (req, res) => {
 
 export const guardarPerfil = async (req, res) => {
   try {
-    const idUsuario = Number(req.body?.id_usuario);
+    const sesion = obtenerSesionRequest(req);
     const nombre = texto(req.body?.nombre);
     const email = texto(req.body?.email).toLowerCase();
     const telefono = texto(req.body?.telefono);
@@ -36,21 +33,23 @@ export const guardarPerfil = async (req, res) => {
     const rfc = texto(req.body?.rfc).toUpperCase();
     const errores = [];
 
-    if (!Number.isInteger(idUsuario) || idUsuario <= 0) errores.push('id_usuario no es válido.');
     if (nombre.length < 3) errores.push('El nombre debe tener al menos 3 caracteres.');
     if (!emailRegex.test(email)) errores.push('El correo electrónico no tiene un formato válido.');
     if (telefono && !/^\d{10}$/.test(telefono)) errores.push('El teléfono debe tener 10 dígitos.');
-    if (!nombreNegocio) errores.push('El nombre del negocio es obligatorio.');
-    if (!municipio) errores.push('El municipio es obligatorio.');
-    if (!direccion) errores.push('La dirección es obligatoria.');
-    if (rfc && !rfcRegex.test(rfc)) errores.push('El RFC no tiene un formato válido.');
+    if (sesion.perfil === 'admin') {
+      if (!nombreNegocio) errores.push('El nombre del negocio es obligatorio.');
+      if (!municipio) errores.push('El municipio es obligatorio.');
+      if (!direccion) errores.push('La dirección es obligatoria.');
+      if (rfc && !rfcRegex.test(rfc)) errores.push('El RFC no tiene un formato válido.');
+    }
 
     if (errores.length > 0) {
       return res.status(400).json({ success: false, error: 'Datos inválidos para actualizar la cuenta.', details: errores });
     }
 
     const perfil = await actualizarPerfil({
-      idUsuario,
+      idUsuario: sesion.idUsuario,
+      perfil: sesion.perfil,
       nombre,
       email,
       telefono,

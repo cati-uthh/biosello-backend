@@ -53,8 +53,8 @@ export const registrarNuevoNegocio = async (req, res) => {
       errores.push('Es obligatorio adjuntar el documento (Aviso COFEPRIS o SAT).');
     } else {
       const sizeInMB = (datosEnvio.archivoBase64.length * 0.75) / (1024 * 1024);
-      if (sizeInMB > 8) {
-        errores.push('El documento adjunto es demasiado grande. El máximo permitido es de 8 MB.');
+      if (sizeInMB > 5) {
+        errores.push('El documento adjunto es demasiado grande. El máximo permitido es de 5 MB.');
       }
     }
 

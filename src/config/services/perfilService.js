@@ -29,6 +29,7 @@ export const obtenerPerfil = async (idUsuario) => {
       LEFT JOIN empleado_negocio en ON en.id_usuario = u.id_usuario AND en.activo = 1
       LEFT JOIN negocio negocio_empleado ON negocio_empleado.id_negocio = en.id_negocio
       WHERE u.id_usuario = ?
+        AND u.activo = 1
       ORDER BY negocio_admin.id_negocio_padre IS NULL DESC, negocio_admin.id_negocio ASC
       LIMIT 1
     `,
@@ -42,11 +43,42 @@ export const obtenerPerfil = async (idUsuario) => {
   return rows[0];
 };
 
-export const actualizarPerfil = async ({ idUsuario, nombre, email, telefono, nombreNegocio, municipio, direccion, rfc }) => {
+export const actualizarPerfil = async ({
+  idUsuario,
+  perfil,
+  nombre,
+  email,
+  telefono,
+  nombreNegocio,
+  municipio,
+  direccion,
+  rfc,
+}) => {
   const connection = await pool.getConnection();
 
   try {
     await connection.beginTransaction();
+
+    const [usuarios] = await connection.execute(
+      `
+        SELECT id_usuario, perfil
+        FROM usuario
+        WHERE id_usuario = ? AND activo = 1
+        LIMIT 1
+        FOR UPDATE
+      `,
+      [idUsuario]
+    );
+    if (usuarios.length === 0) {
+      throw crearError('La cuenta ya no está activa.', 403, 'USUARIO_INACTIVO');
+    }
+    const perfilActual = String(usuarios[0].perfil || '').toLowerCase();
+    const perfilValido = perfil === 'admin'
+      ? ['admin', 'administrador'].includes(perfilActual)
+      : perfilActual === 'empleado';
+    if (!perfilValido) {
+      throw crearError('La sesión ya no corresponde al perfil de la cuenta.', 403, 'PROFILE_CHANGED');
+    }
 
     const [duplicado] = await connection.execute(
       'SELECT id_usuario FROM usuario WHERE email = ? AND id_usuario <> ? LIMIT 1',
@@ -62,17 +94,20 @@ export const actualizarPerfil = async ({ idUsuario, nombre, email, telefono, nom
       [nombre, email, telefono, idUsuario]
     );
 
-    await connection.execute(
-      `
-        UPDATE negocio
-        SET nombre_negocio = ?,
-            municipio = ?,
-            direccion = ?,
-            rfc = ?
-        WHERE id_admin = ?
-      `,
-      [nombreNegocio, municipio, direccion, rfc, idUsuario]
-    );
+    if (perfil === 'admin') {
+      await connection.execute(
+        `
+          UPDATE negocio
+          SET nombre_negocio = ?,
+              municipio = ?,
+              direccion = ?,
+              rfc = ?
+          WHERE id_admin = ?
+            AND id_negocio_padre IS NULL
+        `,
+        [nombreNegocio, municipio, direccion, rfc, idUsuario]
+      );
+    }
 
     await connection.commit();
     return obtenerPerfil(idUsuario);

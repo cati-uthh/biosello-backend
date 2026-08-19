@@ -93,6 +93,46 @@ const validarDatos = (datos, idUsuario) => {
   return errores;
 };
 
+const validarEdicion = (lote, animal) => {
+  const errores = [];
+  const codigoLote = texto(lote?.codigo_lote);
+  const tipoCorte = texto(lote?.tipo_corte);
+  const peso = Number(lote?.peso_kg);
+  const fechaIngreso = texto(lote?.fecha_ingreso);
+  const fechaVencimiento = texto(lote?.fecha_vencimiento);
+  const estado = texto(lote?.estado).toLowerCase();
+
+  if (!codigoLote || codigoLote.length > 100) {
+    errores.push('El codigo de lote es obligatorio y no debe exceder 100 caracteres.');
+  }
+  if (!tipoCorte || tipoCorte.length > 150) {
+    errores.push('El tipo de corte es obligatorio y no debe exceder 150 caracteres.');
+  }
+  if (!Number.isFinite(peso) || peso <= 0) {
+    errores.push('El peso total debe ser mayor a 0.');
+  }
+  if (!fechaValida(fechaIngreso) || !fechaValida(fechaVencimiento)) {
+    errores.push('Las fechas deben usar formato AAAA-MM-DD.');
+  } else if (fechaVencimiento < fechaIngreso) {
+    errores.push('La fecha de vencimiento no puede ser anterior a la fecha de ingreso.');
+  }
+  if (!ESTADOS_LOTE.includes(estado)) {
+    errores.push('El estado del lote no es valido.');
+  }
+
+  if (animal) {
+    if (!texto(animal.num_arete)) errores.push('El numero de arete/sello es obligatorio.');
+    validarEnum(SEXOS, animal.sexo, 'sexo', errores);
+    validarEnum(CLASIFICACIONES, animal.clasificacion, 'clasificacion', errores);
+    const mesesEdad = Number(animal.meses_edad);
+    if (!Number.isInteger(mesesEdad) || mesesEdad < 0 || mesesEdad > 600) {
+      errores.push('La edad del animal debe ser un numero entero entre 0 y 600 meses.');
+    }
+  }
+
+  return errores;
+};
+
 // Normalización con valores por defecto seguros para MariaDB/MySQL
 const normalizarDatos = (datos) => {
   const timestampUnico = Date.now().toString().slice(-6);
@@ -198,18 +238,14 @@ export const registrarNuevoLoteAnimal = async (req, res) => {
 
 export const consultarLotes = async (req, res) => {
   try {
+    const sesion = obtenerSesionRequest(req);
     const idNegocio = req.query?.id_negocio ? Number(req.query.id_negocio) : null;
-    const idEmpleado = req.query?.id_empleado ? Number(req.query.id_empleado) : null;
     const especie = texto(req.query?.especie).toUpperCase();
     const estado = texto(req.query?.estado).toLowerCase();
     const fechaIngreso = texto(req.query?.fecha_ingreso);
 
     if (req.query?.id_negocio && !Number.isInteger(idNegocio)) {
       return res.status(400).json({ success: false, error: 'id_negocio no es valido.' });
-    }
-
-    if (req.query?.id_empleado && !Number.isInteger(idEmpleado)) {
-      return res.status(400).json({ success: false, error: 'id_empleado no es valido.' });
     }
 
     if (especie && !ESPECIES.includes(especie)) {
@@ -226,7 +262,7 @@ export const consultarLotes = async (req, res) => {
 
     const lotes = await obtenerLotes({
       idNegocio,
-      idEmpleado,
+      sesion,
       especie: especie || null,
       estado: estado || null,
       fechaIngreso: fechaIngreso || null,
@@ -243,9 +279,9 @@ export const consultarLotes = async (req, res) => {
 
 export const actualizarEstadoLote = async (req, res) => {
   try {
+    const sesion = obtenerSesionRequest(req);
     const idLote = Number(req.body?.id_lote);
     const estado = texto(req.body?.estado).toLowerCase();
-    const idUsuario = req.body?.id_usuario ? Number(req.body.id_usuario) : null;
 
     if (!Number.isInteger(idLote) || idLote <= 0) {
       return res.status(400).json({ success: false, error: 'id_lote no es valido.' });
@@ -255,11 +291,7 @@ export const actualizarEstadoLote = async (req, res) => {
       return res.status(400).json({ success: false, error: 'estado no es valido.' });
     }
 
-    if (req.body?.id_usuario && (!Number.isInteger(idUsuario) || idUsuario <= 0)) {
-      return res.status(400).json({ success: false, error: 'id_usuario no es valido.' });
-    }
-
-    const resultado = await cambiarEstadoLote({ idLote, estado, idUsuario });
+    const resultado = await cambiarEstadoLote({ idLote, estado, sesion });
 
     return res.status(200).json({
       success: true,
@@ -281,16 +313,25 @@ export const actualizarEstadoLote = async (req, res) => {
 
 export const editarLoteAnimal = async (req, res) => {
   try {
+    const sesion = obtenerSesionRequest(req);
     const idLote = Number(req.body?.id_lote);
-    const idUsuario = req.body?.id_usuario ? Number(req.body.id_usuario) : null;
 
     if (!Number.isInteger(idLote) || idLote <= 0) {
       return res.status(400).json({ success: false, error: 'id_lote no es valido.' });
     }
 
+    const errores = validarEdicion(req.body?.lote, req.body?.animal);
+    if (errores.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Los datos del lote no son validos.',
+        details: errores,
+      });
+    }
+
     const resultado = await actualizarLoteAnimal({
       idLote,
-      idUsuario,
+      sesion,
       lote: req.body?.lote,
       animal: req.body?.animal,
     });
@@ -315,13 +356,14 @@ export const editarLoteAnimal = async (req, res) => {
 
 export const eliminarLoteAnimal = async (req, res) => {
   try {
+    const sesion = obtenerSesionRequest(req);
     const idLote = Number(req.query?.id_lote || req.body?.id_lote);
 
     if (!Number.isInteger(idLote) || idLote <= 0) {
       return res.status(400).json({ success: false, error: 'id_lote no es valido.' });
     }
 
-    const resultado = await eliminarLote({ idLote });
+    const resultado = await eliminarLote({ idLote, sesion });
 
     return res.status(200).json({
       success: true,
@@ -343,18 +385,35 @@ export const eliminarLoteAnimal = async (req, res) => {
 
 export const registrarSalida = async (req, res) => {
   try {
+    const sesion = obtenerSesionRequest(req);
     const idLote = Number(req.body?.id_lote);
     const pesoSalida = Number(req.body?.peso_salida);
+    const idCorte = req.body?.id_corte == null || req.body?.id_corte === ''
+      ? null
+      : Number(req.body.id_corte);
+    const tipoCorte = texto(req.body?.tipo_corte) || null;
+    const tipRecomendacion = texto(req.body?.tip_recomendacion) || null;
 
     if (!Number.isInteger(idLote) || idLote <= 0) {
       return res.status(400).json({ success: false, error: 'id_lote no es válido.' });
     }
 
-    if (isNaN(pesoSalida) || pesoSalida <= 0) {
+    if (!Number.isFinite(pesoSalida) || pesoSalida <= 0) {
       return res.status(400).json({ success: false, error: 'peso_salida debe ser un número mayor a 0.' });
     }
 
-    const resultado = await registrarSalidaLote({ idLote, pesoSalida });
+    if (idCorte !== null && (!Number.isInteger(idCorte) || idCorte <= 0)) {
+      return res.status(400).json({ success: false, error: 'id_corte no es válido.' });
+    }
+
+    const resultado = await registrarSalidaLote({
+      idLote,
+      pesoSalida,
+      idCorte,
+      tipoCorte,
+      tipRecomendacion,
+      sesion,
+    });
 
     return res.status(200).json({
       success: true,

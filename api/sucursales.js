@@ -1,25 +1,65 @@
 import pool from '../src/config/db.js';
-import { put } from '@vercel/blob';
 import bcrypt from 'bcryptjs';
+import { validarAccesoNegocio } from '../src/config/services/autorizacionService.js';
+import { obtenerAdministradorRequest } from '../src/config/utils/auth.js';
+import { eliminarDocumentoPublico, subirDocumentoPublico } from '../src/config/utils/documentoBlob.js';
+
+const limpiarCargaFallida = async (urlDocumento) => {
+  if (!urlDocumento) return;
+  try {
+    await eliminarDocumentoPublico(urlDocumento);
+  } catch (error) {
+    console.error('No se pudo limpiar el documento de una carga fallida:', error);
+  }
+};
+
+const enteroPositivo = (valor) => {
+  const numero = Number(valor);
+  return Number.isInteger(numero) && numero > 0 ? numero : null;
+};
+
+const responderError = (res, error) => {
+  console.error('Error en API sucursales:', error);
+  return res.status(error?.statusCode || 500).json({
+    success: false,
+    error: error?.statusCode ? error.message : 'Error interno del servidor',
+    code: error?.code || 'INTERNAL_ERROR',
+  });
+};
 
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Credentials', true);
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+  res.setHeader('Access-Control-Allow-Headers', 'Authorization, X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   let connection;
   try {
+    const sesion = obtenerAdministradorRequest(
+      req,
+      'Solo una cuenta administradora puede gestionar sucursales.'
+    );
     connection = await pool.getConnection();
 
     // GET: Obtener sucursales
     if (req.method === 'GET') {
-      const idNegocio = Number(req.query.id_negocio);
+      const idNegocio = enteroPositivo(req.query.id_negocio);
       if (!idNegocio) {
         return res.status(400).json({ success: false, error: 'id_negocio es requerido' });
       }
+
+      const negocioSeleccionado = await validarAccesoNegocio(connection, {
+        idNegocio,
+        sesion,
+        soloAdministrador: true,
+      });
+      const idMatriz = negocioSeleccionado.id_negocio_padre || negocioSeleccionado.id_negocio;
+      await validarAccesoNegocio(connection, {
+        idNegocio: idMatriz,
+        sesion,
+        soloAdministrador: true,
+      });
 
       const query = `
         SELECT 
@@ -31,34 +71,43 @@ export default async function handler(req, res) {
           estatus_verificacion,
           id_negocio_padre
         FROM negocio 
-        WHERE id_negocio = ? OR id_negocio_padre = ?
+        WHERE id_admin = ?
+          AND (id_negocio = ? OR id_negocio_padre = ?)
         ORDER BY id_negocio ASC
       `;
 
-      const [rows] = await connection.execute(query, [idNegocio, idNegocio]);
+      const [rows] = await connection.execute(query, [sesion.idUsuario, idMatriz, idMatriz]);
       return res.status(200).json({ success: true, data: rows });
     }
 
     // POST: Registrar sucursal
     if (req.method === 'POST') {
-      const { id_negocio_matriz, nombre_sucursal, municipio, direccion, archivoBase64, nombreArchivo } = req.body || {};
+      const { nombre_sucursal, municipio, direccion, archivoBase64, nombreArchivo } = req.body || {};
+      const idNegocioMatriz = enteroPositivo(req.body?.id_negocio_matriz);
 
-      if (!id_negocio_matriz || !nombre_sucursal || !direccion || !archivoBase64) {
+      if (!idNegocioMatriz || !nombre_sucursal?.trim() || !direccion?.trim() || !archivoBase64 || !nombreArchivo) {
         return res.status(400).json({ success: false, error: 'Ingresa el nombre, dirección y adjunta el documento.' });
       }
+      if (nombre_sucursal.trim().length > 100 || direccion.trim().length > 255 || String(municipio || '').trim().length > 100) {
+        return res.status(400).json({ success: false, error: 'El nombre, municipio o dirección exceden el tamaño permitido.' });
+      }
 
-      let documentoUrlFinal = null;
-      if (archivoBase64 && nombreArchivo) {
-        const buffer = Buffer.from(archivoBase64, 'base64');
-        const blob = await put(`documentos/sucursales/${Date.now()}-${nombreArchivo}`, buffer, {
-          access: 'private',
+      const matrizAutorizada = await validarAccesoNegocio(connection, {
+        idNegocio: idNegocioMatriz,
+        sesion,
+        soloAdministrador: true,
+      });
+      if (matrizAutorizada.id_negocio_padre) {
+        return res.status(400).json({
+          success: false,
+          error: 'Las sucursales solo pueden registrarse bajo el negocio matriz.',
+          code: 'MATRIZ_REQUERIDA',
         });
-        documentoUrlFinal = blob.url;
       }
 
       const [matriz] = await connection.execute(
         'SELECT rfc, id_admin FROM negocio WHERE id_negocio = ? LIMIT 1',
-        [id_negocio_matriz]
+        [idNegocioMatriz]
       );
 
       if (matriz.length === 0) {
@@ -66,44 +115,79 @@ export default async function handler(req, res) {
       }
 
       const { rfc, id_admin } = matriz[0];
+      let documentoUrlFinal = null;
 
-      const queryInsert = `
-        INSERT INTO negocio (nombre_negocio, nombre_sucursal, municipio, direccion, rfc, documento_url, estatus_verificacion, id_admin, id_negocio_padre)
-        VALUES ('Sucursal', ?, ?, ?, ?, ?, 'pendiente', ?, ?)
-      `;
+      try {
+        documentoUrlFinal = await subirDocumentoPublico({
+          archivoBase64,
+          nombreArchivo,
+          carpeta: `documentos/sucursales/${idNegocioMatriz}`,
+        });
 
-      const [result] = await connection.execute(queryInsert, [
-        nombre_sucursal.trim(),
-        municipio?.trim() || 'Huejutla de Reyes',
-        direccion.trim(),
-        rfc,
-        documentoUrlFinal,
-        id_admin,
-        id_negocio_matriz
-      ]);
+        const queryInsert = `
+          INSERT INTO negocio (nombre_negocio, nombre_sucursal, municipio, direccion, rfc, documento_url, estatus_verificacion, id_admin, id_negocio_padre)
+          VALUES ('Sucursal', ?, ?, ?, ?, ?, 'pendiente', ?, ?)
+        `;
 
-      return res.status(201).json({
-        success: true,
-        message: 'Sucursal registrada exitosamente.',
-        data: { id_negocio: result.insertId, nombre_sucursal, direccion, estatus_verificacion: 'pendiente' }
-      });
+        const [result] = await connection.execute(queryInsert, [
+          nombre_sucursal.trim(),
+          municipio?.trim() || 'Huejutla de Reyes',
+          direccion.trim(),
+          rfc,
+          documentoUrlFinal,
+          id_admin,
+          idNegocioMatriz
+        ]);
+
+        return res.status(201).json({
+          success: true,
+          message: 'Sucursal registrada exitosamente.',
+          data: { id_negocio: result.insertId, nombre_sucursal, direccion, estatus_verificacion: 'pendiente' }
+        });
+      } catch (error) {
+        await limpiarCargaFallida(documentoUrlFinal);
+        throw error;
+      }
     }
 
     // PUT: Modificar sucursal (pasa a estatus 'pendiente' de re-verificación)
     if (req.method === 'PUT') {
-      const { id_sucursal, nombre_sucursal, direccion, municipio, archivoBase64, nombreArchivo } = req.body || {};
+      const { nombre_sucursal, direccion, municipio, archivoBase64, nombreArchivo } = req.body || {};
+      const idSucursal = enteroPositivo(req.body?.id_sucursal);
 
-      if (!id_sucursal || !nombre_sucursal || !direccion) {
+      if (!idSucursal || !nombre_sucursal?.trim() || !direccion?.trim()) {
         return res.status(400).json({ success: false, error: 'Datos incompletos para actualizar.' });
+      }
+      if (nombre_sucursal.trim().length > 100 || direccion.trim().length > 255 || String(municipio || '').trim().length > 100) {
+        return res.status(400).json({ success: false, error: 'El nombre, municipio o dirección exceden el tamaño permitido.' });
+      }
+
+      const sucursalAutorizada = await validarAccesoNegocio(connection, {
+        idNegocio: idSucursal,
+        sesion,
+        soloAdministrador: true,
+      });
+      if (!sucursalAutorizada.id_negocio_padre) {
+        return res.status(400).json({
+          success: false,
+          error: 'El negocio matriz no puede editarse desde el módulo de sucursales.',
+          code: 'SUCURSAL_REQUERIDA',
+        });
       }
 
       let documentoUrlFinal = null;
-      if (archivoBase64 && nombreArchivo) {
-        const buffer = Buffer.from(archivoBase64, 'base64');
-        const blob = await put(`documentos/sucursales/${Date.now()}-${nombreArchivo}`, buffer, {
-          access: 'private',
+      if (archivoBase64 || nombreArchivo) {
+        if (!archivoBase64 || !nombreArchivo) {
+          return res.status(400).json({
+            success: false,
+            error: 'El contenido y nombre del nuevo documento deben enviarse juntos.',
+          });
+        }
+        documentoUrlFinal = await subirDocumentoPublico({
+          archivoBase64,
+          nombreArchivo,
+          carpeta: `documentos/sucursales/${sucursalAutorizada.id_negocio_padre}`,
         });
-        documentoUrlFinal = blob.url;
       }
 
       let queryUpdate = `
@@ -117,10 +201,20 @@ export default async function handler(req, res) {
         params.push(documentoUrlFinal);
       }
 
-      queryUpdate += ` WHERE id_negocio = ?`;
-      params.push(id_sucursal);
+      queryUpdate += ` WHERE id_negocio = ? AND id_admin = ? AND id_negocio_padre IS NOT NULL`;
+      params.push(idSucursal, sesion.idUsuario);
 
-      await connection.execute(queryUpdate, params);
+      let resultado;
+      try {
+        [resultado] = await connection.execute(queryUpdate, params);
+      } catch (error) {
+        await limpiarCargaFallida(documentoUrlFinal);
+        throw error;
+      }
+      if (resultado.affectedRows === 0) {
+        await limpiarCargaFallida(documentoUrlFinal);
+        return res.status(404).json({ success: false, error: 'La sucursal indicada no existe.' });
+      }
 
       return res.status(200).json({
         success: true,
@@ -130,16 +224,30 @@ export default async function handler(req, res) {
 
     // DELETE: Eliminar sucursal previa verificación de contraseña del dueño
     if (req.method === 'DELETE') {
-      const { id_sucursal, id_usuario, contrasena } = req.body || {};
+      const { contrasena } = req.body || {};
+      const idSucursal = enteroPositivo(req.body?.id_sucursal);
 
-      if (!id_sucursal || !id_usuario || !contrasena) {
+      if (!idSucursal || !contrasena) {
         return res.status(400).json({ success: false, error: 'Ingresa tu contraseña para confirmar el borrado.' });
+      }
+
+      const sucursalAutorizada = await validarAccesoNegocio(connection, {
+        idNegocio: idSucursal,
+        sesion,
+        soloAdministrador: true,
+      });
+      if (!sucursalAutorizada.id_negocio_padre) {
+        return res.status(400).json({
+          success: false,
+          error: 'El negocio matriz no puede eliminarse desde el módulo de sucursales.',
+          code: 'SUCURSAL_REQUERIDA',
+        });
       }
 
       // Validar identidad del usuario
       const [userRows] = await connection.execute(
         'SELECT contrasena_hash FROM usuario WHERE id_usuario = ? LIMIT 1',
-        [id_usuario]
+        [sesion.idUsuario]
       );
 
       if (userRows.length === 0) {
@@ -148,11 +256,21 @@ export default async function handler(req, res) {
 
       const contrasenaValida = await bcrypt.compare(contrasena, userRows[0].contrasena_hash);
       if (!contrasenaValida) {
-        return res.status(401).json({ success: false, error: 'Contraseña incorrecta. No se pudo eliminar la sucursal.' });
+        return res.status(401).json({
+          success: false,
+          error: 'Contraseña incorrecta. No se pudo eliminar la sucursal.',
+          code: 'INVALID_PASSWORD',
+        });
       }
 
       // Eliminar la sucursal (por CASCADE se eliminan lotes o registros vinculados)
-      await connection.execute('DELETE FROM negocio WHERE id_negocio = ?', [id_sucursal]);
+      const [resultado] = await connection.execute(
+        'DELETE FROM negocio WHERE id_negocio = ? AND id_admin = ? AND id_negocio_padre IS NOT NULL',
+        [idSucursal, sesion.idUsuario]
+      );
+      if (resultado.affectedRows === 0) {
+        return res.status(404).json({ success: false, error: 'La sucursal indicada no existe.' });
+      }
 
       return res.status(200).json({
         success: true,
@@ -162,8 +280,7 @@ export default async function handler(req, res) {
 
     return res.status(405).json({ success: false, error: 'Método no permitido' });
   } catch (error) {
-    console.error('Error en API sucursales:', error);
-    return res.status(500).json({ success: false, error: 'Error interno del servidor' });
+    return responderError(res, error);
   } finally {
     if (connection) connection.release();
   }
@@ -172,7 +289,7 @@ export default async function handler(req, res) {
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '10mb',
+      sizeLimit: '7mb',
     },
   },
 };

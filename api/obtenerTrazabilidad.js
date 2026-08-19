@@ -1,10 +1,14 @@
 import pool from '../src/config/db';
 
+const primerValor = (valor) => Array.isArray(valor) ? valor[0] : valor;
+const esVerdadero = (valor) => ['1', 'true'].includes(
+    String(primerValor(valor) ?? '').trim().toLowerCase()
+);
+
 export default async function handler(req, res) {
-    res.setHeader('Access-Control-Allow-Credentials', true);
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
+    res.setHeader('Access-Control-Allow-Headers', 'Authorization, X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version');
 
     if (req.method === 'OPTIONS') {
         return res.status(200).end();
@@ -14,10 +18,17 @@ export default async function handler(req, res) {
         return res.status(405).json({ success: false, error: 'Método no permitido' });
     }
 
-    const { id_lote } = req.query;
+    const idLote = Number(primerValor(req.query?.id_lote));
+    const idCorteTexto = String(primerValor(req.query?.id_corte) ?? '').trim();
+    const idCorte = idCorteTexto ? Number(idCorteTexto) : null;
+    const incluirTipCuidado = esVerdadero(req.query?.incluir_tip_cuidado);
+    const incluirRecomendacion = esVerdadero(req.query?.incluir_recomendacion);
 
-    if (!id_lote) {
+    if (!Number.isInteger(idLote) || idLote <= 0) {
         return res.status(400).json({ success: false, error: 'Falta el identificador del lote.' });
+    }
+    if (idCorteTexto && (!Number.isInteger(idCorte) || idCorte <= 0)) {
+        return res.status(400).json({ success: false, error: 'El identificador del corte no es valido.' });
     }
 
     let connection;
@@ -27,7 +38,7 @@ export default async function handler(req, res) {
 
         const query = `
             SELECT 
-                l.codigo_lote, l.tipo_corte, l.peso_kg, l.fecha_ingreso, l.fecha_vencimiento, l.estado,
+                l.codigo_lote, l.tipo_corte, l.tip_recomendacion, l.peso_kg, l.fecha_ingreso, l.fecha_vencimiento, l.estado,
                 n.nombre_negocio, n.municipio AS municipio_negocio,
                 a.num_arete, a.especie, a.clasificacion, a.imagen_animal_url,
                 o.upp_origen, o.localidad_origen, o.municipio_origen,
@@ -45,26 +56,70 @@ export default async function handler(req, res) {
             WHERE l.id_lote = ?
         `;
 
-        const [rows] = await connection.execute(query, [id_lote]);
+        const [rows] = await connection.execute(query, [idLote]);
 
         if (rows.length === 0) {
             return res.status(404).json({ success: false, error: 'El lote solicitado no existe.' });
         }
 
         const trazabilidad = rows[0];
+        let tipoCorteFinal = trazabilidad.tipo_corte;
+        let tipRecomendacionFinal = trazabilidad.tip_recomendacion || null;
+
+        if (idCorte !== null) {
+            const [cortes] = await connection.execute(
+                `
+                    SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion
+                    FROM catalogo_corte
+                    WHERE id_corte = ?
+                    LIMIT 1
+                `,
+                [idCorte]
+            );
+
+            if (cortes.length === 0) {
+                return res.status(404).json({ success: false, error: 'El corte indicado en el QR no existe.' });
+            }
+
+            const corte = cortes[0];
+            if (String(corte.especie || '').toUpperCase() !== String(trazabilidad.especie || '').toUpperCase()) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'El corte indicado en el QR no corresponde a la especie del lote.'
+                });
+            }
+
+            tipoCorteFinal = String(corte.nombre_corte || '').trim() || trazabilidad.tipo_corte;
+            const partesRecomendacion = [];
+            const tipCuidado = String(corte.tip_cuidado || '').trim();
+            const recomendacion = String(corte.recomendacion || '').trim();
+
+            if (incluirTipCuidado && tipCuidado) {
+                partesRecomendacion.push(`Tip: ${tipCuidado}`);
+            }
+            if (incluirRecomendacion && recomendacion) {
+                partesRecomendacion.push(`Recomendación: ${recomendacion}`);
+            }
+            tipRecomendacionFinal = partesRecomendacion.length > 0
+                ? partesRecomendacion.join(' | ')
+                : null;
+        }
 
         return res.status(200).json({
             success: true,
             lote_id: trazabilidad.codigo_lote,
-            producto: trazabilidad.tipo_corte,
+            producto: tipoCorteFinal,
+            tipo_corte: tipoCorteFinal,
+            tip_recomendacion: tipRecomendacionFinal,
             peso_kg: trazabilidad.peso_kg,
             fecha_empaque: trazabilidad.fecha_ingreso,
-            url_publica: `https://biosell.app/trazabilidad?id_lote=${id_lote}`,
+            url_publica: null,
             detalles_trazabilidad: {
                 establecimiento: trazabilidad.nombre_negocio,
                 arete_siniga: trazabilidad.num_arete,
                 especie: trazabilidad.especie,
                 imagen_animal_url: trazabilidad.imagen_animal_url,
+                tip_recomendacion: tipRecomendacionFinal,
                 procedencia: `${trazabilidad.localidad_origen}, ${trazabilidad.municipio_origen}`,
                 upp_rancho: trazabilidad.upp_origen,
                 productor: trazabilidad.nombre_propietario,
