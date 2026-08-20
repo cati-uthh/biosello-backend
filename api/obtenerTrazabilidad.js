@@ -18,17 +18,18 @@ export default async function handler(req, res) {
         return res.status(405).json({ success: false, error: 'Método no permitido' });
     }
 
-    const idLote = Number(primerValor(req.query?.id_lote));
+    // Permite buscar por id_lote numérico o por código de lote alfanumérico
+    const idLoteRaw = String(primerValor(req.query?.id_lote ?? req.query?.codigo_lote ?? req.query?.lote ?? req.query?.codigo) ?? '').trim();
     const idCorteTexto = String(primerValor(req.query?.id_corte) ?? '').trim();
     const idCorte = idCorteTexto ? Number(idCorteTexto) : null;
     const incluirTipCuidado = esVerdadero(req.query?.incluir_tip_cuidado);
     const incluirRecomendacion = esVerdadero(req.query?.incluir_recomendacion);
 
-    if (!Number.isInteger(idLote) || idLote <= 0) {
-        return res.status(400).json({ success: false, error: 'Falta el identificador del lote.' });
+    if (!idLoteRaw) {
+        return res.status(400).json({ success: false, error: 'Falta el identificador o código del lote.' });
     }
     if (idCorteTexto && (!Number.isInteger(idCorte) || idCorte <= 0)) {
-        return res.status(400).json({ success: false, error: 'El identificador del corte no es valido.' });
+        return res.status(400).json({ success: false, error: 'El identificador del corte no es válido.' });
     }
 
     let connection;
@@ -36,9 +37,19 @@ export default async function handler(req, res) {
     try {
         connection = await pool.getConnection();
 
+        const esNumeroEntero = /^\d+$/.test(idLoteRaw);
+        const idLoteNumerico = esNumeroEntero ? Number(idLoteRaw) : null;
+
+        // Manejo de formato para números continuos (ej. 202608001 -> LOT-2026-08-001)
+        const soloDigitos = idLoteRaw.replace(/\D/g, '');
+        let codigoFormateado = idLoteRaw;
+        if (soloDigitos.length === 9) {
+            codigoFormateado = `LOT-${soloDigitos.slice(0, 4)}-${soloDigitos.slice(4, 6)}-${soloDigitos.slice(6, 9)}`;
+        }
+
         const query = `
             SELECT 
-                l.codigo_lote, l.tipo_corte, l.tip_recomendacion, l.peso_kg, l.fecha_ingreso, l.fecha_vencimiento, l.estado,
+                l.id_lote, l.codigo_lote, l.tipo_corte, l.tip_recomendacion, l.peso_kg, l.fecha_ingreso, l.fecha_vencimiento, l.estado,
                 n.nombre_negocio, n.municipio AS municipio_negocio,
                 a.num_arete, a.especie, a.clasificacion, a.imagen_animal_url,
                 o.upp_origen, o.localidad_origen, o.municipio_origen,
@@ -53,10 +64,23 @@ export default async function handler(req, res) {
             LEFT JOIN guia_animal ga ON a.id_animal = ga.id_animal
             LEFT JOIN guia_transito g ON ga.id_guia = g.id_guia
             LEFT JOIN rastro r ON g.id_rastro = r.id_rastro
-            WHERE l.id_lote = ?
+            WHERE l.id_lote = ? 
+               OR UPPER(l.codigo_lote) = UPPER(?)
+               OR UPPER(l.codigo_lote) = UPPER(?)
+               OR UPPER(l.codigo_lote) = UPPER(?)
+            ORDER BY (l.id_lote = ?) DESC, l.id_lote DESC
+            LIMIT 1
         `;
 
-        const [rows] = await connection.execute(query, [idLote]);
+        const paramsBusqueda = [
+            idLoteNumerico || 0,
+            idLoteRaw,
+            codigoFormateado,
+            `LOT-${idLoteRaw}`,
+            idLoteNumerico || 0
+        ];
+
+        const [rows] = await connection.execute(query, paramsBusqueda);
 
         if (rows.length === 0) {
             return res.status(404).json({ success: false, error: 'El lote solicitado no existe.' });
