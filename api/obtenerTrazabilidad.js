@@ -19,11 +19,25 @@ export default async function handler(req, res) {
     }
 
     // Permite buscar por id_lote numérico o por código de lote alfanumérico
-    const idLoteRaw = String(primerValor(req.query?.id_lote ?? req.query?.codigo_lote ?? req.query?.lote ?? req.query?.codigo) ?? '').trim();
-    const idCorteTexto = String(primerValor(req.query?.id_corte) ?? '').trim();
+    let idLoteRaw = String(primerValor(req.query?.id_lote ?? req.query?.codigo_lote ?? req.query?.lote ?? req.query?.codigo) ?? '').trim();
+    let idCorteTexto = String(primerValor(req.query?.id_corte) ?? '').trim();
+
+    // Extraer sufijo de corte si viene en el código del lote (ej. LOT-2026-08-001-C02 o LOT-2026-08-001-C2)
+    const matchCorte = idLoteRaw.match(/^(.+)[-_]C(\d+)$/i);
+    if (matchCorte) {
+        idLoteRaw = matchCorte[1].trim();
+        if (!idCorteTexto) {
+            idCorteTexto = String(Number(matchCorte[2]));
+        }
+    }
+
     const idCorte = idCorteTexto ? Number(idCorteTexto) : null;
-    const incluirTipCuidado = esVerdadero(req.query?.incluir_tip_cuidado);
-    const incluirRecomendacion = esVerdadero(req.query?.incluir_recomendacion);
+    const incluirTipCuidado = req.query?.incluir_tip_cuidado !== undefined
+        ? esVerdadero(req.query?.incluir_tip_cuidado)
+        : true;
+    const incluirRecomendacion = req.query?.incluir_recomendacion !== undefined
+        ? esVerdadero(req.query?.incluir_recomendacion)
+        : true;
 
     if (!idLoteRaw) {
         return res.status(400).json({ success: false, error: 'Falta el identificador o código del lote.' });
@@ -90,7 +104,7 @@ export default async function handler(req, res) {
         let tipoCorteFinal = trazabilidad.tipo_corte;
         let tipRecomendacionFinal = trazabilidad.tip_recomendacion ? String(trazabilidad.tip_recomendacion).trim() : null;
 
-        // 1. Si vino id_corte específico desde el QR
+        // 1. Si vino id_corte específico (desde el QR o mediante el sufijo -C01, -C02 en búsqueda manual)
         if (idCorte !== null) {
             try {
                 const [cortes] = await connection.execute(
@@ -116,15 +130,15 @@ export default async function handler(req, res) {
                         if (recomendacion) partesRecomendacion.push(`Recomendación: ${recomendacion}`);
                     }
 
-                    tipRecomendacionFinal = partesRecomendacion.length > 0
-                        ? partesRecomendacion.join(' | ')
-                        : null;
+                    if (partesRecomendacion.length > 0) {
+                        tipRecomendacionFinal = partesRecomendacion.join(' | ');
+                    }
                 }
             } catch (eCorte) {
                 // Silencioso
             }
         } else if (!tipRecomendacionFinal && trazabilidad.tipo_corte && trazabilidad.tipo_corte.toUpperCase() !== 'CANAL ENTERA' && trazabilidad.tipo_corte.toUpperCase() !== 'CANAL') {
-            // 2. Si es búsqueda manual y el tipo_corte coincide con un corte específico del catálogo
+            // 2. Si el lote fue registrado con un corte específico del catálogo y no tiene tips explícitos
             try {
                 const especieLote = trazabilidad.especie || 'BOVINO';
                 const [cortes] = await connection.execute(
