@@ -1,4 +1,4 @@
-﻿import pool from '../src/config/db';
+﻿import pool from '../src/config/db.js';
 
 const primerValor = (valor) => Array.isArray(valor) ? valor[0] : valor;
 const esVerdadero = (valor) => ['1', 'true'].includes(
