@@ -1,4 +1,4 @@
-﻿import pool from '../src/config/db.js';
+﻿import pool from '../src/config/db';
 
 const primerValor = (valor) => Array.isArray(valor) ? valor[0] : valor;
 const esVerdadero = (valor) => ['1', 'true'].includes(
@@ -90,68 +90,69 @@ export default async function handler(req, res) {
         let tipoCorteFinal = trazabilidad.tipo_corte;
         let tipRecomendacionFinal = trazabilidad.tip_recomendacion ? String(trazabilidad.tip_recomendacion).trim() : null;
 
-        // 1. Si se indicó un corte en el QR
+        // 1. Si vino id_corte específico desde el QR
         if (idCorte !== null) {
-            try {
-                const [cortes] = await connection.execute(
-                    'SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion FROM catalogo_corte WHERE id_corte = ? LIMIT 1',
-                    [idCorte]
-                );
+            const [cortes] = await connection.execute(
+                
+                    SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion
+                    FROM catalogo_corte
+                    WHERE id_corte = ?
+                    LIMIT 1
+                ,
+                [idCorte]
+            );
 
-                if (cortes && cortes.length > 0) {
-                    const corte = cortes[0];
-                    tipoCorteFinal = String(corte.nombre_corte || '').trim() || trazabilidad.tipo_corte;
-                    const partesRecomendacion = [];
-                    const tipCuidado = String(corte.tip_cuidado || '').trim();
-                    const recomendacion = String(corte.recomendacion || '').trim();
+            if (cortes && cortes.length > 0) {
+                const corte = cortes[0];
+                tipoCorteFinal = String(corte.nombre_corte || '').trim() || trazabilidad.tipo_corte;
+                const partesRecomendacion = [];
+                const tipCuidado = String(corte.tip_cuidado || '').trim();
+                const recomendacion = String(corte.recomendacion || '').trim();
 
-                    if (incluirTipCuidado && tipCuidado) {
-                        partesRecomendacion.push(Tip: );
-                    }
-                    if (incluirRecomendacion && recomendacion) {
-                        partesRecomendacion.push(Recomendación: );
-                    }
-                    if (!incluirTipCuidado && !incluirRecomendacion) {
-                        if (tipCuidado) partesRecomendacion.push(Tip: );
-                        if (recomendacion) partesRecomendacion.push(Recomendación: );
-                    }
-
-                    if (partesRecomendacion.length > 0) {
-                        tipRecomendacionFinal = partesRecomendacion.join(' | ');
-                    }
+                if (incluirTipCuidado && tipCuidado) {
+                    partesRecomendacion.push(Tip: );
                 }
-            } catch (eCorte) {
-                // Silencioso
+                if (incluirRecomendacion && recomendacion) {
+                    partesRecomendacion.push(Recomendación: );
+                }
+                if (!incluirTipCuidado && !incluirRecomendacion) {
+                    if (tipCuidado) partesRecomendacion.push(Tip: );
+                    if (recomendacion) partesRecomendacion.push(Recomendación: );
+                }
+
+                if (partesRecomendacion.length > 0) {
+                    tipRecomendacionFinal = partesRecomendacion.join(' | ');
+                }
             }
-        }
+        } else if (!tipRecomendacionFinal) {
+            // 2. Si no hay tip en el lote ni vino id_corte, consultar catalogo_corte por especie/nombre
+            const especieLote = trazabilidad.especie || 'BOVINO';
+            const [cortes] = await connection.execute(
+                
+                    SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion
+                    FROM catalogo_corte
+                    WHERE UPPER(especie) = UPPER(?)
+                ,
+                [especieLote]
+            );
 
-        // 2. Si no hay tip en el lote ni vino id_corte, obtener recomendaciones automáticamente de catalogo_corte
-        if (!tipRecomendacionFinal) {
-            try {
-                const especieLote = trazabilidad.especie || 'BOVINO';
-                const [cortesEspecie] = await connection.execute(
-                    'SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion FROM catalogo_corte WHERE UPPER(especie) = UPPER(?)',
-                    [especieLote]
-                );
+            if (cortes && cortes.length > 0) {
+                const tipoNorm = String(trazabilidad.tipo_corte || '').trim().toUpperCase();
+                const corte = cortes.find((c) => {
+                    const nom = String(c.nombre_corte || '').toUpperCase();
+                    return tipoNorm && (nom.includes(tipoNorm) || tipoNorm.includes(nom));
+                }) || cortes[0];
 
-                if (cortesEspecie && cortesEspecie.length > 0) {
-                    const tipoNorm = String(trazabilidad.tipo_corte || '').trim().toUpperCase();
-                    const corteAuto = cortesEspecie.find((c) => {
-                        const nom = String(c.nombre_corte || '').toUpperCase();
-                        return tipoNorm && (nom.includes(tipoNorm) || tipoNorm.includes(nom));
-                    }) || cortesEspecie[0];
+                const partesRecomendacion = [];
+                const tipCuidado = String(corte.tip_cuidado || '').trim();
+                const recomendacion = String(corte.recomendacion || '').trim();
 
-                    if (corteAuto) {
-                        const partes = [];
-                        if (corteAuto.tip_cuidado) partes.push(Tip: );
-                        if (corteAuto.recomendacion) partes.push(Recomendación: );
-                        if (partes.length > 0) {
-                            tipRecomendacionFinal = partes.join(' | ');
-                        }
-                    }
+                if (tipCuidado) partesRecomendacion.push(Tip: );
+                if (recomendacion) partesRecomendacion.push(Recomendación: );
+
+                if (partesRecomendacion.length > 0) {
+                    tipRecomendacionFinal = partesRecomendacion.join(' | ');
                 }
-            } catch (eAuto) {
-                // Silencioso
             }
         }
 
