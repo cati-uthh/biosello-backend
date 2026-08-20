@@ -137,33 +137,37 @@ export default async function handler(req, res) {
             } catch (eCorte) {
                 // Silencioso
             }
-        } else if (!tipRecomendacionFinal && trazabilidad.tipo_corte && trazabilidad.tipo_corte.toUpperCase() !== 'CANAL ENTERA' && trazabilidad.tipo_corte.toUpperCase() !== 'CANAL') {
-            // 2. Si el lote fue registrado con un corte específico del catálogo y no tiene tips explícitos
+        }
+
+        // 2. Si no hay tip en el lote ni vino id_corte, obtener recomendaciones de catalogo_corte según especie/corte
+        if (!tipRecomendacionFinal) {
             try {
                 const especieLote = trazabilidad.especie || 'BOVINO';
                 const [cortes] = await connection.execute(
-                    'SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion FROM catalogo_corte WHERE especie = ?',
+                    'SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion FROM catalogo_corte WHERE especie = ? ORDER BY id_corte ASC',
                     [especieLote]
                 );
 
                 if (cortes && cortes.length > 0) {
                     const tipoNorm = String(trazabilidad.tipo_corte || '').trim().toUpperCase();
-                    const corteExacto = cortes.find((c) => {
+                    const corte = cortes.find((c) => {
                         const nom = String(c.nombre_corte || '').toUpperCase();
                         return tipoNorm && (nom.includes(tipoNorm) || tipoNorm.includes(nom));
-                    });
+                    }) || cortes[0];
 
-                    if (corteExacto) {
-                        const partesRecomendacion = [];
-                        const tipCuidado = String(corteExacto.tip_cuidado || '').trim();
-                        const recomendacion = String(corteExacto.recomendacion || '').trim();
+                    if (trazabilidad.tipo_corte && (trazabilidad.tipo_corte.toUpperCase() === 'CANAL ENTERA' || trazabilidad.tipo_corte.toUpperCase() === 'CANAL')) {
+                        tipoCorteFinal = corte.nombre_corte || trazabilidad.tipo_corte;
+                    }
 
-                        if (tipCuidado) partesRecomendacion.push(`Tip: ${tipCuidado}`);
-                        if (recomendacion) partesRecomendacion.push(`Recomendación: ${recomendacion}`);
+                    const partesRecomendacion = [];
+                    const tipCuidado = String(corte.tip_cuidado || '').trim();
+                    const recomendacion = String(corte.recomendacion || '').trim();
 
-                        if (partesRecomendacion.length > 0) {
-                            tipRecomendacionFinal = partesRecomendacion.join(' | ');
-                        }
+                    if (tipCuidado) partesRecomendacion.push(`Tip: ${tipCuidado}`);
+                    if (recomendacion) partesRecomendacion.push(`Recomendación: ${recomendacion}`);
+
+                    if (partesRecomendacion.length > 0) {
+                        tipRecomendacionFinal = partesRecomendacion.join(' | ');
                     }
                 }
             } catch (eAuto) {
