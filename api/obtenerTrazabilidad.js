@@ -116,44 +116,40 @@ export default async function handler(req, res) {
                         if (recomendacion) partesRecomendacion.push(`Recomendación: ${recomendacion}`);
                     }
 
-                    if (partesRecomendacion.length > 0) {
-                        tipRecomendacionFinal = partesRecomendacion.join(' | ');
-                    }
+                    tipRecomendacionFinal = partesRecomendacion.length > 0
+                        ? partesRecomendacion.join(' | ')
+                        : null;
                 }
             } catch (eCorte) {
                 // Silencioso
             }
-        }
-
-        // 2. Si no hay tip en el lote y no vino id_corte en el QR, buscar en catalogo_corte por coincidencia de nombre o palabras clave
-        if (!tipRecomendacionFinal) {
+        } else if (!tipRecomendacionFinal && trazabilidad.tipo_corte && trazabilidad.tipo_corte.toUpperCase() !== 'CANAL ENTERA' && trazabilidad.tipo_corte.toUpperCase() !== 'CANAL') {
+            // 2. Si es búsqueda manual y el tipo_corte coincide con un corte específico del catálogo
             try {
                 const especieLote = trazabilidad.especie || 'BOVINO';
                 const [cortes] = await connection.execute(
-                    'SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion FROM catalogo_corte WHERE especie = ? ORDER BY id_corte ASC',
+                    'SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion FROM catalogo_corte WHERE especie = ?',
                     [especieLote]
                 );
 
                 if (cortes && cortes.length > 0) {
                     const tipoNorm = String(trazabilidad.tipo_corte || '').trim().toUpperCase();
-                    const palabras = tipoNorm.split(/[\s/,-]+/).filter((p) => p.length > 2);
-
-                    // Buscar coincidencia exacta o por palabras clave (ej: "Lomo", "Diezmillo", "Arrachera", "Bistec")
-                    const corte = cortes.find((c) => {
+                    const corteExacto = cortes.find((c) => {
                         const nom = String(c.nombre_corte || '').toUpperCase();
-                        return (tipoNorm && (nom.includes(tipoNorm) || tipoNorm.includes(nom))) ||
-                               palabras.some((pal) => nom.includes(pal));
-                    }) || cortes[0];
+                        return tipoNorm && (nom.includes(tipoNorm) || tipoNorm.includes(nom));
+                    });
 
-                    const partesRecomendacion = [];
-                    const tipCuidado = String(corte.tip_cuidado || '').trim();
-                    const recomendacion = String(corte.recomendacion || '').trim();
+                    if (corteExacto) {
+                        const partesRecomendacion = [];
+                        const tipCuidado = String(corteExacto.tip_cuidado || '').trim();
+                        const recomendacion = String(corteExacto.recomendacion || '').trim();
 
-                    if (tipCuidado) partesRecomendacion.push(`Tip: ${tipCuidado}`);
-                    if (recomendacion) partesRecomendacion.push(`Recomendación: ${recomendacion}`);
+                        if (tipCuidado) partesRecomendacion.push(`Tip: ${tipCuidado}`);
+                        if (recomendacion) partesRecomendacion.push(`Recomendación: ${recomendacion}`);
 
-                    if (partesRecomendacion.length > 0) {
-                        tipRecomendacionFinal = partesRecomendacion.join(' | ');
+                        if (partesRecomendacion.length > 0) {
+                            tipRecomendacionFinal = partesRecomendacion.join(' | ');
+                        }
                     }
                 }
             } catch (eAuto) {
