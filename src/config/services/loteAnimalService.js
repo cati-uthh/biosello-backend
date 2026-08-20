@@ -852,10 +852,12 @@ export const registrarSalidaLote = async ({
       `
         UPDATE lote
         SET peso_actual = ?,
-            estado = ?
+            estado = ?,
+            tipo_corte = COALESCE(?, tipo_corte),
+            tip_recomendacion = COALESCE(?, tip_recomendacion)
         WHERE id_lote = ?
       `,
-      [nuevoPeso, nuevoEstado, idLote]
+      [nuevoPeso, nuevoEstado, tipoCorteFinal, tipRecomendacionFinal, idLote]
     );
 
     await connection.commit();

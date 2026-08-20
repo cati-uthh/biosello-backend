@@ -125,20 +125,24 @@ export default async function handler(req, res) {
             }
         }
 
-        // 2. Si no hay tip en el lote ni vino id_corte, consultar catalogo_corte por especie/nombre
+        // 2. Si no hay tip en el lote y no vino id_corte en el QR, buscar en catalogo_corte por coincidencia de nombre o palabras clave
         if (!tipRecomendacionFinal) {
             try {
                 const especieLote = trazabilidad.especie || 'BOVINO';
                 const [cortes] = await connection.execute(
-                    'SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion FROM catalogo_corte WHERE especie = ?',
+                    'SELECT id_corte, especie, nombre_corte, tip_cuidado, recomendacion FROM catalogo_corte WHERE especie = ? ORDER BY id_corte ASC',
                     [especieLote]
                 );
 
                 if (cortes && cortes.length > 0) {
                     const tipoNorm = String(trazabilidad.tipo_corte || '').trim().toUpperCase();
+                    const palabras = tipoNorm.split(/[\s/,-]+/).filter((p) => p.length > 2);
+
+                    // Buscar coincidencia exacta o por palabras clave (ej: "Lomo", "Diezmillo", "Arrachera", "Bistec")
                     const corte = cortes.find((c) => {
                         const nom = String(c.nombre_corte || '').toUpperCase();
-                        return tipoNorm && (nom.includes(tipoNorm) || tipoNorm.includes(nom));
+                        return (tipoNorm && (nom.includes(tipoNorm) || tipoNorm.includes(nom))) ||
+                               palabras.some((pal) => nom.includes(pal));
                     }) || cortes[0];
 
                     const partesRecomendacion = [];
