@@ -18,17 +18,29 @@ export default async function handler(req, res) {
         return res.status(405).json({ success: false, error: 'Método no permitido' });
     }
 
-    const idLote = Number(primerValor(req.query?.id_lote));
+    const idLoteTexto = String(primerValor(req.query?.id_lote) ?? '').trim();
+    const idLote = idLoteTexto ? Number(idLoteTexto) : null;
+    const codigoLote = String(primerValor(req.query?.codigo_lote) ?? '').trim().toUpperCase();
     const idCorteTexto = String(primerValor(req.query?.id_corte) ?? '').trim();
-    const idCorte = idCorteTexto ? Number(idCorteTexto) : null;
+    const codigoCorte = String(primerValor(req.query?.codigo_corte) ?? '').trim().toUpperCase();
+    const idCorteDesdeCodigo = /^C\d{2,}$/.test(codigoCorte)
+        ? Number(codigoCorte.slice(1))
+        : null;
+    const idCorte = idCorteTexto ? Number(idCorteTexto) : idCorteDesdeCodigo;
     const incluirTipCuidado = esVerdadero(req.query?.incluir_tip_cuidado);
     const incluirRecomendacion = esVerdadero(req.query?.incluir_recomendacion);
 
-    if (!Number.isInteger(idLote) || idLote <= 0) {
-        return res.status(400).json({ success: false, error: 'Falta el identificador del lote.' });
+    if (!codigoLote && (!Number.isInteger(idLote) || idLote <= 0)) {
+        return res.status(400).json({ success: false, error: 'Falta el código del lote.' });
+    }
+    if (codigoLote && !/^LOT-\d{4}-\d{2}-\d{3}$/.test(codigoLote)) {
+        return res.status(400).json({ success: false, error: 'El código del lote no tiene un formato válido.' });
     }
     if (idCorteTexto && (!Number.isInteger(idCorte) || idCorte <= 0)) {
         return res.status(400).json({ success: false, error: 'El identificador del corte no es valido.' });
+    }
+    if (codigoCorte && (!/^C\d{2,}$/.test(codigoCorte) || !Number.isInteger(idCorte) || idCorte <= 0)) {
+        return res.status(400).json({ success: false, error: 'El código del corte no tiene un formato válido.' });
     }
 
     let connection;
@@ -53,10 +65,11 @@ export default async function handler(req, res) {
             LEFT JOIN guia_animal ga ON a.id_animal = ga.id_animal
             LEFT JOIN guia_transito g ON ga.id_guia = g.id_guia
             LEFT JOIN rastro r ON g.id_rastro = r.id_rastro
-            WHERE l.id_lote = ?
+            WHERE ${codigoLote ? 'l.codigo_lote = ?' : 'l.id_lote = ?'}
+            LIMIT 1
         `;
 
-        const [rows] = await connection.execute(query, [idLote]);
+        const [rows] = await connection.execute(query, [codigoLote || idLote]);
 
         if (rows.length === 0) {
             return res.status(404).json({ success: false, error: 'El lote solicitado no existe.' });
@@ -107,12 +120,16 @@ export default async function handler(req, res) {
 
         return res.status(200).json({
             success: true,
+            codigo_trazabilidad: `${trazabilidad.codigo_lote}${idCorte !== null ? `-C${String(idCorte).padStart(2, '0')}` : ''}`,
+            codigo_corte: idCorte !== null ? `C${String(idCorte).padStart(2, '0')}` : null,
+            id_corte: idCorte,
             lote_id: trazabilidad.codigo_lote,
             producto: tipoCorteFinal,
             tipo_corte: tipoCorteFinal,
             tip_recomendacion: tipRecomendacionFinal,
             peso_kg: trazabilidad.peso_kg,
             fecha_empaque: trazabilidad.fecha_ingreso,
+            fecha_vencimiento: trazabilidad.fecha_vencimiento,
             url_publica: null,
             detalles_trazabilidad: {
                 establecimiento: trazabilidad.nombre_negocio,
