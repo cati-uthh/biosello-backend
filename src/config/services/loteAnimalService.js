@@ -1,4 +1,4 @@
-import pool from '../db';
+﻿import pool from '../db';
 import {
   agregarFiltroAccesoLotes,
   validarAccesoLote,
@@ -692,7 +692,7 @@ export const eliminarLote = async ({ idLote, sesion }) => {
     await validarAccesoLote(connection, { idLote, sesion, bloquear: true });
 
     const [existente] = await connection.execute(
-      'SELECT id_lote FROM lote WHERE id_lote = ? LIMIT 1',
+      'SELECT id_lote, id_animal FROM lote WHERE id_lote = ? LIMIT 1',
       [idLote]
     );
 
@@ -700,7 +700,29 @@ export const eliminarLote = async ({ idLote, sesion }) => {
       throw crearError('El lote indicado no existe.', 404, 'LOTE_NOT_FOUND');
     }
 
+    // 1. Eliminar registros dependientes del lote en tablas hijas
+    await connection.execute('DELETE FROM historial_estado WHERE id_lote = ?', [idLote]);
+    await connection.execute('DELETE FROM salida_lote WHERE id_lote = ?', [idLote]);
+
+    // 2. Eliminar el lote principal
     await connection.execute('DELETE FROM lote WHERE id_lote = ?', [idLote]);
+
+    // 3. Limpiar animal huérfano si no pertenece a otros lotes
+    const [existenteAnimal] = await connection.execute(
+      'SELECT id_animal FROM animal WHERE id_animal = (SELECT id_animal FROM lote WHERE id_lote = ? LIMIT 1)',
+      [idLote]
+    );
+    const idAnimal = existente[0]?.id_animal;
+    if (idAnimal) {
+      const [otros] = await connection.execute(
+        'SELECT COUNT(*) AS total FROM lote WHERE id_animal = ?',
+        [idAnimal]
+      );
+      if (Number(otros[0]?.total || 0) === 0) {
+        await connection.execute('DELETE FROM guia_animal WHERE id_animal = ?', [idAnimal]);
+        await connection.execute('DELETE FROM animal WHERE id_animal = ?', [idAnimal]);
+      }
+    }
     await connection.commit();
 
     return { id_lote: idLote };
@@ -877,3 +899,5 @@ export const registrarSalidaLote = async ({
     connection.release();
   }
 };
+
+
